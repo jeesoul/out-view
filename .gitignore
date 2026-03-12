@@ -51,8 +51,16 @@ client/outview-client
 *.pem
 *.key
 *.p12
+
+# Claude Code settings
+.claude/
+
 # Requirements and reports (keep local only)
 验收报告.md
 技术现实调用方案.md
 详情需求文档.md
 需求描述.txt
+CLAUDE.md
+TEST_REPORT.md
+USER_MANUAL.md
+DEPLOYMENT.md
