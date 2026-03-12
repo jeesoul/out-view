@@ -63,3 +63,6 @@ client/outview-client
 CLAUDE.md
 TEST_REPORT.md
 DEPLOYMENT.md
+
+# Release packages (never commit)
+release/
