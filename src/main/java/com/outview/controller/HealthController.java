@@ -20,11 +20,11 @@ public class HealthController {
         return result;
     }
 
-    @GetMapping("/")
-    public Map<String, Object> index() {
+    @GetMapping("/api/info")
+    public Map<String, Object> info() {
         Map<String, Object> result = new HashMap<>();
         result.put("name", "outView Server");
-        result.put("version", "1.0.0");
+        result.put("version", "1.0.2-SNAPSHOT");
         result.put("description", "Remote Desktop Tunneling Server");
         return result;
     }

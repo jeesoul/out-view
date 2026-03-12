@@ -3,9 +3,11 @@ package com.outview.netty.handler;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.outview.entity.ClientSession;
+import com.outview.entity.PresetConfig;
 import com.outview.protocol.ProtocolConstants;
 import com.outview.protocol.ProtocolMessage;
 import com.outview.service.DataPortService;
+import com.outview.service.PresetConfigService;
 import com.outview.service.PortMappingService;
 import com.outview.service.SessionStore;
 import io.netty.channel.ChannelHandler;
@@ -29,13 +31,16 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
     private final SessionStore sessionStore;
     private final PortMappingService portMappingService;
     private final DataPortService dataPortService;
+    private final PresetConfigService presetConfigService;
 
     public AuthHandler(SessionStore sessionStore,
                       PortMappingService portMappingService,
-                      DataPortService dataPortService) {
+                      DataPortService dataPortService,
+                      PresetConfigService presetConfigService) {
         this.sessionStore = sessionStore;
         this.portMappingService = portMappingService;
         this.dataPortService = dataPortService;
+        this.presetConfigService = presetConfigService;
     }
 
     @Override
@@ -65,11 +70,25 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
                 return;
             }
 
-            // TODO: 校验 Token 合法性
-            // 这里简化处理，实际应该从数据库或配置中验证
+            // Token 验证
+            PresetConfigService.ValidationResult validationResult = presetConfigService.validateToken(deviceId, token);
+            if (!validationResult.isValid()) {
+                log.warn("Token validation failed for deviceId: {}", deviceId);
+                sendErrorResponse(ctx, "Token validation failed");
+                return;
+            }
 
-            // 分配对外端口
-            int externalPort = portMappingService.allocatePort(deviceId, localPort);
+            PresetConfig presetConfig = null;
+            if (validationResult.isPreset()) {
+                presetConfig = validationResult.getPresetConfig();
+                log.info("Using preset config for deviceId: {}, fixedPort: {}",
+                        deviceId, presetConfig.getFixedPort());
+            } else {
+                log.info("Using random token for deviceId: {}", deviceId);
+            }
+
+            // 分配对外端口 (支持预设配置中的固定端口)
+            int externalPort = portMappingService.allocatePort(deviceId, localPort, presetConfig);
             if (externalPort < 0) {
                 sendErrorResponse(ctx, "No available port");
                 return;
@@ -90,8 +109,8 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
             sendRegisterAck(ctx, deviceId, externalPort);
 
             // 敏感信息脱敏：日志中不记录 token
-            log.info("Client registered: deviceId={}, externalPort={}, localPort={}",
-                    deviceId, externalPort, localPort);
+            log.info("Client registered: deviceId={}, externalPort={}, localPort={}, isPreset={}",
+                    deviceId, externalPort, localPort, validationResult.isPreset());
 
         } catch (Exception e) {
             log.error("Register failed: {}", e.getMessage());

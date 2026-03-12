@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.2--SNAPSHOT-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/java-8%2B-orange.svg" alt="Java">
   <img src="https://img.shields.io/badge/go-1.21%2B-00ADD8.svg" alt="Go">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -68,6 +68,8 @@
 | **配置文件支持** | 支持 config.txt，简化部署流程 | ✅ |
 | **SSL/TLS 加密** | 支持自签名证书和 CA 证书 | ✅ |
 | **管理后台** | Web UI 管理设备、生成 Token | ✅ |
+| **预设配置管理** | 预设固定 ClientId/Token/端口，支持 H2/MySQL | ✅ |
+| **后台登录认证** | Spring Security 安全认证，保护管理后台 | ✅ |
 
 ---
 
@@ -151,6 +153,22 @@ outview:
   ssl:
     enabled: false            # 生产环境建议启用
     use-self-signed: true     # 开发环境可使用自签名证书
+  # 管理员账号配置（部署时请修改）
+  admin:
+    username: admin
+    password: admin123
+
+# 数据库配置（默认 H2，可切换 MySQL）
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/outview;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true           # H2 控制台
+      path: /h2-console
 ```
 
 ### 客户端参数
@@ -189,6 +207,36 @@ go build -ldflags "-s -w" -o outview-client.exe ./cmd/outview-client
 
 # 编译 GUI 版本（需要 CGO 和 C 编译器）
 build-gui.bat
+```
+
+---
+
+## API 接口
+
+### 预设配置管理
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/presets` | GET | 获取所有预设配置 |
+| `/api/presets` | POST | 创建预设配置 |
+| `/api/presets/{id}` | PUT | 更新预设配置 |
+| `/api/presets/{id}` | DELETE | 删除预设配置 |
+| `/api/presets/generate` | POST | 生成随机凭证 |
+
+### 设备管理
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/devices` | GET | 获取在线设备列表 |
+| `/api/devices/{deviceId}` | DELETE | 断开指定设备 |
+| `/api/devices/mappings` | GET | 获取端口映射列表 |
+
+### 示例：创建预设配置
+
+```bash
+curl -X POST http://localhost:8080/api/presets \
+  -H "Content-Type: application/json" \
+  -d '{"clientId":"my-device","token":"my-token","fixedPort":6100,"description":"办公室电脑"}'
 ```
 
 ---
@@ -285,6 +333,9 @@ out-view/
 **服务端：**
 - Spring Boot 2.7.18
 - Netty 4.1.100
+- Spring Data JPA
+- H2 / MySQL（可选）
+- Spring Security
 - Fastjson
 
 **客户端：**

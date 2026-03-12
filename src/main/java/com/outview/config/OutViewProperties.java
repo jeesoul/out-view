@@ -47,6 +47,11 @@ public class OutViewProperties {
      */
     private SslConfig ssl = new SslConfig();
 
+    /**
+     * 管理员账号配置
+     */
+    private AdminConfig admin = new AdminConfig();
+
     @Data
     public static class SslConfig {
         /**
@@ -93,5 +98,18 @@ public class OutViewProperties {
          * 自签名证书有效期 (天)
          */
         private int selfSignedValidityDays = 365;
+    }
+
+    @Data
+    public static class AdminConfig {
+        /**
+         * 管理员用户名
+         */
+        private String username = "admin";
+
+        /**
+         * 管理员密码
+         */
+        private String password = "admin123";
     }
 }

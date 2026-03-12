@@ -3,7 +3,7 @@ REM Build script for outView Client
 
 setlocal EnableDelayedExpansion
 
-set VERSION=1.0.0
+set VERSION=1.0.2-SNAPSHOT
 set BUILD_DIR=build
 set BINARY_NAME=outview-client
 

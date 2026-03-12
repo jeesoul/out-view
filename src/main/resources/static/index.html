@@ -20,14 +20,39 @@
             color: white;
             padding: 20px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .header h1 {
+        .header-left h1 {
             font-size: 24px;
             font-weight: 600;
         }
-        .header p {
+        .header-left p {
             opacity: 0.9;
             margin-top: 5px;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .header-right .user-info {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .btn-logout {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-logout:hover {
+            background: rgba(255,255,255,0.3);
         }
         .container {
             max-width: 1200px;
@@ -114,12 +139,26 @@
         .btn-primary:hover {
             background: #5a6fd6;
         }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
         .btn-danger {
             background: #dc3545;
             color: white;
         }
         .btn-danger:hover {
             background: #c82333;
+        }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #5a6268;
         }
         .btn-sm {
             padding: 4px 10px;
@@ -153,13 +192,133 @@
             padding: 40px;
             color: #999;
         }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .badge-secondary {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-overlay.show {
+            display: flex;
+        }
+        .modal {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+        .modal-body {
+            padding: 20px;
+        }
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .form-group textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+        .form-group .hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        .form-row {
+            display: flex;
+            gap: 10px;
+        }
+        .form-row .form-group {
+            flex: 1;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="container">
-            <h1>outView 管理后台</h1>
-            <p>远程桌面内网穿透服务管理系统</p>
+        <div class="container" style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+            <div class="header-left">
+                <h1>outView 管理后台</h1>
+                <p>远程桌面内网穿透服务管理系统</p>
+            </div>
+            <div class="header-right">
+                <span class="user-info">管理员</span>
+                <form action="/logout" method="post" style="margin:0;">
+                    <button type="submit" class="btn-logout">退出登录</button>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -177,6 +336,39 @@
             <div class="stat-card">
                 <div class="value" id="mappingCount">-</div>
                 <div class="label">端口映射</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="presetCount">-</div>
+                <div class="label">预设配置</div>
+            </div>
+        </div>
+
+        <!-- 预设配置管理 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>预设配置管理</h2>
+                <div>
+                    <button class="btn btn-secondary" onclick="generateCredentials()">生成凭证</button>
+                    <button class="btn btn-primary" onclick="showAddPresetModal()">添加预设配置</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="presetLoading" class="loading">加载中...</div>
+                <table id="presetTable" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>客户端ID</th>
+                            <th>Token</th>
+                            <th>固定端口</th>
+                            <th>描述</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="presetBody"></tbody>
+                </table>
+                <div id="presetEmpty" class="empty" style="display:none;">暂无预设配置</div>
             </div>
         </div>
 
@@ -242,8 +434,237 @@
         </div>
     </div>
 
+    <!-- 预设配置编辑模态框 -->
+    <div id="presetModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">添加预设配置</h3>
+                <button class="modal-close" onclick="closePresetModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="presetId">
+                <div class="form-group">
+                    <label>客户端ID</label>
+                    <input type="text" id="presetClientId" placeholder="留空自动生成">
+                    <div class="hint">唯一标识，留空将自动生成</div>
+                </div>
+                <div class="form-group">
+                    <label>Token</label>
+                    <input type="text" id="presetToken" placeholder="留空自动生成">
+                    <div class="hint">认证令牌，留空将自动生成</div>
+                </div>
+                <div class="form-group">
+                    <label>固定端口</label>
+                    <input type="number" id="presetFixedPort" placeholder="留空则随机分配" min="6000" max="6500">
+                    <div class="hint">指定固定端口 (6000-6500)，留空则系统随机分配</div>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea id="presetDescription" placeholder="可选描述信息"></textarea>
+                </div>
+                <div class="form-group" id="enabledGroup" style="display:none;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="presetEnabled" checked>
+                        <label for="presetEnabled">启用</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closePresetModal()">取消</button>
+                <button class="btn btn-primary" onclick="savePreset()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 生成凭证结果模态框 -->
+    <div id="credentialsModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>已生成凭证</h3>
+                <button class="modal-close" onclick="closeCredentialsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>客户端ID</label>
+                    <code id="generatedClientId" style="display:block;padding:10px;background:#f8f9fa;border-radius:4px;word-break:break-all;"></code>
+                </div>
+                <div class="form-group">
+                    <label>Token</label>
+                    <code id="generatedToken" style="display:block;padding:10px;background:#f8f9fa;border-radius:4px;word-break:break-all;"></code>
+                </div>
+                <p style="color:#666;font-size:13px;">请妥善保管此信息，可用于添加预设配置或直接用于客户端连接</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCredentialsModal()">关闭</button>
+                <button class="btn btn-primary" onclick="useCredentialsForPreset()">用于添加预设配置</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE = '';
+
+        // 预设配置管理
+        async function loadPresets() {
+            const loading = document.getElementById('presetLoading');
+            const table = document.getElementById('presetTable');
+            const empty = document.getElementById('presetEmpty');
+            const body = document.getElementById('presetBody');
+
+            loading.style.display = 'block';
+            table.style.display = 'none';
+            empty.style.display = 'none';
+
+            try {
+                const res = await fetch(API_BASE + '/api/presets');
+                const data = await res.json();
+
+                document.getElementById('presetCount').textContent = data.total || 0;
+
+                if (data.presets && data.presets.length > 0) {
+                    body.innerHTML = data.presets.map(p => `
+                        <tr>
+                            <td><code>${p.clientId}</code></td>
+                            <td><code title="${p.token}">${p.token.substring(0, 12)}...</code></td>
+                            <td>${p.fixedPort || '<span style="color:#999">随机</span>'}</td>
+                            <td>${p.description || '-'}</td>
+                            <td>
+                                <span class="badge ${p.enabled ? 'badge-success' : 'badge-secondary'}">
+                                    ${p.enabled ? '启用' : '禁用'}
+                                </span>
+                            </td>
+                            <td>${p.createTime ? new Date(p.createTime).toLocaleString() : '-'}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="editPreset(${p.id}, '${p.clientId}', '${p.token}', ${p.fixedPort || 'null'}, '${(p.description || '').replace(/'/g, "\\'")}', ${p.enabled})">编辑</button>
+                                <button class="btn btn-danger btn-sm" onclick="deletePreset(${p.id}, '${p.clientId}')">删除</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                    table.style.display = 'table';
+                } else {
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Failed to load presets:', e);
+                empty.textContent = '加载失败: ' + e.message;
+                empty.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function showAddPresetModal() {
+            document.getElementById('modalTitle').textContent = '添加预设配置';
+            document.getElementById('presetId').value = '';
+            document.getElementById('presetClientId').value = '';
+            document.getElementById('presetToken').value = '';
+            document.getElementById('presetFixedPort').value = '';
+            document.getElementById('presetDescription').value = '';
+            document.getElementById('enabledGroup').style.display = 'none';
+            document.getElementById('presetModal').classList.add('show');
+        }
+
+        function editPreset(id, clientId, token, fixedPort, description, enabled) {
+            document.getElementById('modalTitle').textContent = '编辑预设配置';
+            document.getElementById('presetId').value = id;
+            document.getElementById('presetClientId').value = clientId;
+            document.getElementById('presetClientId').readOnly = true;
+            document.getElementById('presetToken').value = token;
+            document.getElementById('presetFixedPort').value = fixedPort || '';
+            document.getElementById('presetDescription').value = description || '';
+            document.getElementById('presetEnabled').checked = enabled;
+            document.getElementById('enabledGroup').style.display = 'block';
+            document.getElementById('presetModal').classList.add('show');
+        }
+
+        function closePresetModal() {
+            document.getElementById('presetModal').classList.remove('show');
+            document.getElementById('presetClientId').readOnly = false;
+        }
+
+        async function savePreset() {
+            const id = document.getElementById('presetId').value;
+            const clientId = document.getElementById('presetClientId').value;
+            const token = document.getElementById('presetToken').value;
+            const fixedPort = document.getElementById('presetFixedPort').value;
+            const description = document.getElementById('presetDescription').value;
+            const enabled = document.getElementById('presetEnabled').checked;
+
+            const body = {
+                clientId: clientId || undefined,
+                token: token || undefined,
+                fixedPort: fixedPort ? parseInt(fixedPort) : null,
+                description: description || undefined,
+                enabled: id ? enabled : undefined
+            };
+
+            try {
+                const url = id ? API_BASE + '/api/presets/' + id : API_BASE + '/api/presets';
+                const method = id ? 'PUT' : 'POST';
+
+                const res = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    closePresetModal();
+                    loadPresets();
+                    alert(id ? '更新成功' : '添加成功');
+                } else {
+                    alert('保存失败: ' + data.message);
+                }
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+            }
+        }
+
+        async function deletePreset(id, clientId) {
+            if (!confirm('确定要删除预设配置 "' + clientId + '" 吗？')) return;
+
+            try {
+                const res = await fetch(API_BASE + '/api/presets/' + id, { method: 'DELETE' });
+                const data = await res.json();
+
+                if (data.success) {
+                    loadPresets();
+                } else {
+                    alert('删除失败: ' + data.message);
+                }
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+        }
+
+        async function generateCredentials() {
+            try {
+                const res = await fetch(API_BASE + '/api/presets/generate', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('generatedClientId').textContent = data.clientId;
+                    document.getElementById('generatedToken').textContent = data.token;
+                    document.getElementById('credentialsModal').classList.add('show');
+                }
+            } catch (e) {
+                alert('生成失败: ' + e.message);
+            }
+        }
+
+        function closeCredentialsModal() {
+            document.getElementById('credentialsModal').classList.remove('show');
+        }
+
+        function useCredentialsForPreset() {
+            const clientId = document.getElementById('generatedClientId').textContent;
+            const token = document.getElementById('generatedToken').textContent;
+            closeCredentialsModal();
+            showAddPresetModal();
+            document.getElementById('presetClientId').value = clientId;
+            document.getElementById('presetToken').value = token;
+        }
 
         // 加载设备列表
         async function loadDevices() {
@@ -344,11 +765,13 @@
         }
 
         // 初始化
+        loadPresets();
         loadDevices();
         loadMappings();
 
         // 自动刷新
         setInterval(() => {
+            loadPresets();
             loadDevices();
             loadMappings();
         }, 10000);

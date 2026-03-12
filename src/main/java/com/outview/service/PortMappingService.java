@@ -1,6 +1,7 @@
 package com.outview.service;
 
 import com.outview.config.OutViewProperties;
+import com.outview.entity.PresetConfig;
 import com.outview.entity.PortMapping;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,20 +42,42 @@ public class PortMappingService {
     }
 
     /**
-     * 为设备分配端口
+     * 为设备分配端口 (无预设配置)
      */
     public int allocatePort(String deviceId, int targetPort) {
+        return allocatePort(deviceId, targetPort, null);
+    }
+
+    /**
+     * 为设备分配端口
+     * @param deviceId 设备ID
+     * @param targetPort 目标端口
+     * @param presetConfig 预设配置 (可为null)
+     */
+    public int allocatePort(String deviceId, int targetPort, PresetConfig presetConfig) {
         // 检查是否已分配
         Integer existingPort = deviceToPortMap.get(deviceId);
         if (existingPort != null) {
             return existingPort;
         }
 
-        // 分配新端口
-        int port = allocateNextPort();
-        if (port < 0) {
-            log.error("No available port for device: {}", deviceId);
-            return -1;
+        int port;
+        if (presetConfig != null && presetConfig.getFixedPort() != null) {
+            // 使用预设配置中的固定端口
+            port = presetConfig.getFixedPort();
+            // 检查端口是否已被占用
+            if (portMappingMap.containsKey(port)) {
+                log.error("Fixed port {} already in use for device: {}", port, deviceId);
+                return -1;
+            }
+            log.info("Using fixed port {} from preset config for device: {}", port, deviceId);
+        } else {
+            // 循环分配可用端口
+            port = allocateNextPort();
+            if (port < 0) {
+                log.error("No available port for device: {}", deviceId);
+                return -1;
+            }
         }
 
         // 创建映射

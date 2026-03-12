@@ -2,7 +2,7 @@
 
 # Build script for outView Client
 
-VERSION="1.0.0"
+VERSION="1.0.2-SNAPSHOT"
 BUILD_DIR="build"
 BINARY_NAME="outview-client"
 
