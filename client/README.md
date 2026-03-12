@@ -48,6 +48,18 @@ go build -o outview-client ./cmd/outview-client
 
 ## 使用方法
 
+### 配置文件方式（推荐）
+创建 `config.txt`（与exe同目录）：
+```
+host=your-server.com
+port=7000
+device-id=your-device-id
+token=your-token
+local-port=3389
+```
+
+双击运行 `outview-client.exe` 即可自动读取配置。
+
 ### 命令行参数
 ```bash
 ./outview-client -host <服务器地址> -port <控制端口> -device-id <设备ID> -token <密钥> -local-port <本地端口>
@@ -62,6 +74,7 @@ go build -o outview-client ./cmd/outview-client
 | `-token` | 认证密钥 (必需) | - |
 | `-local-port` | 本地服务端口 | 3389 (RDP) |
 | `-heartbeat` | 心跳间隔 (秒) | 30 |
+| `-config` | 指定配置文件路径 | 自动检测 |
 | `-version` | 显示版本信息 | - |
 
 ### 环境变量

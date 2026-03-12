@@ -106,9 +106,19 @@ java -jar target/outview-server.jar
 
 **步骤 4: 启动客户端**
 
+使用Go客户端（推荐）：
 ```bash
-java -cp target/outview-server.jar com.outview.client.OutViewClientTest <服务器IP> 7000 <设备ID> <Token> 3389
+outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
 ```
+
+或使用配置文件方式，创建 `config.txt`：
+```
+host=your-server.com
+port=7000
+device-id=your-device-id
+token=your-token
+```
+然后双击运行 `outview-client.exe`
 
 **步骤 5: 连接远程桌面**
 
@@ -242,7 +252,49 @@ curl -X POST http://服务器IP:8080/api/tokens
 }
 ```
 
-### 4.2 运行客户端
+### 4.2 Go 客户端（推荐）
+
+**命令行参数方式:**
+
+```bash
+outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+```
+
+**配置文件方式:**
+
+创建 `config.txt`（与exe同目录）：
+```
+host=your-server.com
+port=7000
+device-id=your-device-id
+token=your-token
+local-port=3389
+```
+
+双击运行 `outview-client.exe` 即可自动读取配置。
+
+**支持的参数:**
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| -host | 服务器地址 | - |
+| -port | 服务器端口 | 7000 |
+| -device-id | 设备ID | - |
+| -token | 认证密钥 | - |
+| -local-port | 本地服务端口 | 3389 (RDP) |
+| -heartbeat | 心跳间隔(秒) | 30 |
+| -config | 指定配置文件路径 | 自动检测 |
+
+**环境变量支持:**
+
+```bash
+export OUTVIEW_SERVER_HOST=your-server.com
+export OUTVIEW_DEVICE_ID=your-device-id
+export OUTVIEW_TOKEN=your-token
+./outview-client
+```
+
+### 4.3 Java 客户端（备用）
 
 **交互式客户端:**
 
@@ -730,5 +782,5 @@ curl -X DELETE http://服务器IP:8080/api/devices/设备ID
 
 ---
 
-*文档版本: 1.0.0*
-*最后更新: 2024-01-01*
+*文档版本: 1.1.0*
+*最后更新: 2026-03-12*

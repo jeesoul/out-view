@@ -1,132 +1,188 @@
 # outView - 远程桌面内网穿透系统
 
+让外部电脑A通过公网服务器远程连接内网电脑B的RDP服务。
+
+## 使用场景
+
+```
+┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
+│   电脑 A        │         │  公网服务器      │         │   电脑 B        │
+│   (外出电脑)     │  RDP    │  your-server    │  隧道   │   (家庭电脑)     │
+│                 │ ──────> │                 │ <────── │                 │
+│  运行 mstsc     │         │  运行服务端      │         │  运行客户端      │
+└─────────────────┘         └─────────────────┘         └─────────────────┘
+```
+
 ## 项目状态
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 服务端核心 | ✅ 完成 | Spring Boot + Netty |
+| 服务端核心 | ✅ 完成 | Spring Boot 2.7 + Netty 4.1 |
 | 数据端口监听 | ✅ 完成 | 动态分配 6000-6500 |
-| 数据转发 | ✅ 完成 | 双向转发 + 连接ID |
-| SSL/TLS | ✅ 完成 | 自签名证书支持 |
-| Go客户端核心 | ✅ 完成 | 协议 + 心跳 + 转发 |
-| GUI界面 | ✅ 完成 | fyne 跨平台UI |
-| exe打包 | ⏳ 待Go环境 | 需安装Go编译 |
+| 数据转发 | ✅ 完成 | 双向转发 + 连接ID管理 |
+| Token认证 | ✅ 完成 | 自动生成 + 有效期管理 |
+| 心跳保活 | ✅ 完成 | 30秒间隔 / 90秒超时 |
+| SSL/TLS | ✅ 完成 | 自签名证书 + CA证书支持 |
+| Go客户端 | ✅ 完成 | CLI版本已编译 |
+| 配置文件支持 | ✅ 完成 | 支持config.txt |
 
 ## 快速开始
 
-### 1. 启动服务端
+### 1. 部署服务端
 
 ```bash
-cd D:\claudeCodeSpace\java\out-view
-
 # 编译
-set JAVA_HOME=C:\Program Files\Java\jdk-1.8
-D:\java\maven\apache-maven-3.8.8\bin\mvn.cmd package -Dmaven.test.skip=true -s D:\java\maven\my-settings.xml
+mvn package -DskipTests
 
 # 运行
-java -jar target\outview-server.jar
+java -jar target/outview-server.jar
 ```
 
-### 2. 生成 Token
+### 2. 生成Token
 
-访问 http://localhost:8080/index.html，点击"生成新 Token"
+访问 `http://服务器IP:8080/index.html`，点击"生成新 Token"
 
-### 3. 编译客户端 (需要 Go)
+记录返回的 `deviceId` 和 `token`
 
+### 3. 运行客户端
+
+**方式一：命令行参数**
 ```bash
-cd D:\claudeCodeSpace\java\out-view\client
-
-# 安装依赖
-go mod tidy
-
-# 编译 GUI 版本
-build-gui.bat
-
-# 或编译 CLI 版本
-build.bat
+outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
 ```
 
-### 4. 使用客户端
+**方式二：配置文件**
 
-**GUI 版本** (推荐):
-- 双击运行 `outview-client-gui-windows-amd64.exe`
-- 输入服务器地址、端口、Token
-- 点击"连接"
-
-**CLI 版本**:
-```bash
-outview-client-windows-amd64.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+创建 `config.txt`（与exe同目录）：
+```
+host=your-server.com
+port=7000
+device-id=your-device-id
+token=your-token
+local-port=3389
 ```
 
-### 5. 连接远程桌面
+双击运行 `outview-client.exe` 即可
 
-1. 打开 Windows 远程桌面连接 (mstsc)
-2. 输入 `服务器IP:分配的端口` (如 `192.168.1.100:6001`)
-3. 输入家庭电脑的用户名和密码
+### 4. 连接远程桌面
+
+1. 打开 Windows 远程桌面连接 (Win+R → mstsc)
+2. 输入 `服务器IP:分配端口`（如 `120.27.214.55:6001`）
+3. 输入电脑B的Windows用户名和密码
+
+## 端口说明
+
+| 端口 | 用途 | 说明 |
+|------|------|------|
+| 8080 | HTTP API | 管理后台、Token生成 |
+| 7000 | 控制端口 | 客户端注册、心跳 |
+| 6000-6500 | 数据端口 | RDP转发，自动分配 |
+
+## 配置说明
+
+### 服务端配置 (application.yml)
+
+```yaml
+outview:
+  control-port: 7000        # 客户端连接端口
+  data-port-start: 6000     # 数据端口范围
+  data-port-end: 6500
+  heartbeat-timeout: 90     # 心跳超时(秒)
+  heartbeat-interval: 30    # 心跳间隔(秒)
+  token-expire-days: 30     # Token有效期(天)
+  ssl:
+    enabled: false          # 生产环境建议启用
+```
+
+### 客户端配置
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| host | 服务器地址 | - |
+| port | 服务器端口 | 7000 |
+| device-id | 设备ID | - |
+| token | 认证密钥 | - |
+| local-port | 本地服务端口 | 3389 (RDP) |
+| heartbeat | 心跳间隔(秒) | 30 |
 
 ## 目录结构
 
 ```
 out-view/
-├── src/main/java/com/outview/    # 服务端 Java 代码
+├── src/main/java/com/outview/    # 服务端源码
 │   ├── config/                   # 配置类
 │   ├── controller/               # REST API
-│   ├── entity/                   # 实体类
-│   ├── netty/                    # Netty 核心代码
-│   │   ├── handler/              # 处理器
-│   │   └── ssl/                  # SSL 相关
-│   ├── protocol/                 # 协议相关
-│   ├── service/                  # 服务层
-│   └── client/                   # Java 测试客户端
-├── client/                       # Go 客户端
-│   ├── cmd/
-│   │   ├── outview-client/       # CLI 入口
-│   │   └── outview-gui/          # GUI 入口
-│   ├── internal/
+│   ├── netty/                    # Netty核心
+│   │   ├── handler/              # 消息处理器
+│   │   └── ssl/                  # SSL支持
+│   ├── protocol/                 # 协议实现
+│   └── service/                  # 业务服务
+├── client/                       # Go客户端源码
+│   ├── cmd/outview-client/       # CLI入口
+│   ├── internal/                 # 内部模块
 │   │   ├── protocol/             # 协议实现
 │   │   └── client/               # 客户端核心
-│   ├── build.bat                 # CLI 构建脚本
-│   └── build-gui.bat             # GUI 构建脚本
-├── target/outview-server.jar     # 服务端可执行文件
-└── pom.xml                       # Maven 配置
+│   └── go.mod                    # Go依赖
+└── pom.xml                       # Maven配置
 ```
-
-## 端口说明
-
-| 端口 | 用途 |
-|------|------|
-| 8080 | HTTP API / 管理后台 |
-| 7000 | 客户端注册/心跳 |
-| 6000-6500 | 数据转发端口 |
 
 ## 依赖要求
 
-### 服务端
-- JDK 8+
-- Maven 3.6+
+| 组件 | 版本 | 说明 |
+|------|------|------|
+| JDK | 8+ | 服务端运行 |
+| Maven | 3.6+ | 服务端编译 |
+| Go | 1.21+ | 客户端编译（可选） |
 
-### 客户端编译
-- Go 1.21+
-- CGO (GUI版本需要)
+## 编译客户端
 
-## 下载 Go
+```bash
+cd client
 
-如果需要编译客户端，请下载安装 Go:
-- 官网: https://go.dev/dl/
-- 国内镜像: https://golang.google.cn/dl/
+# 安装依赖
+go mod tidy
 
-Windows 推荐下载 `go1.21.x.windows-amd64.msi` 直接安装。
+# 编译 CLI 版本
+set CGO_ENABLED=0
+go build -ldflags "-s -w" -o outview-client.exe ./cmd/outview-client
+```
 
 ## 常见问题
 
-### Q: Go 未安装怎么办?
-A: 客户端代码已完成，但需要安装 Go 才能编译。安装 Go 后运行 `build.bat` 即可。
+### Q: 客户端显示连接失败？
+- 检查服务器是否启动
+- 检查防火墙是否开放7000端口
+- 检查deviceId和token是否正确
 
-### Q: GUI 编译失败?
-A: GUI 版本需要 CGO 支持。如果编译失败，可以使用 CLI 版本，或在有 MinGW 环境下编译。
+### Q: 远程桌面连接不上？
+- 确认客户端显示"注册成功"和分配的端口
+- 确认使用正确的端口（如6001，不是7000）
+- 检查防火墙是否开放6000-6500端口
 
-### Q: 连接远程桌面失败?
-A: 检查:
-1. 服务端是否启动
-2. 客户端是否成功注册
-3. 防火墙是否开放数据端口
+### Q: 连接后黑屏或断开？
+- 确认电脑B开启了远程桌面（系统属性→远程）
+- 确认电脑B的RDP服务正常运行（默认端口3389）
+- 确认电脑B防火墙允许3389入站
+
+### Q: 多台电脑怎么办？
+- 每台电脑使用不同的deviceId
+- 每台电脑会分配不同的数据端口
+- 通过不同端口区分连接哪台电脑
+
+## 协议格式
+
+自定义二进制协议，12字节消息头：
+
+| 字段 | 长度 | 说明 |
+|------|------|------|
+| Magic | 4B | 0x4F565753 ("OVWS") |
+| Version | 1B | 协议版本(1) |
+| Type | 1B | 消息类型 |
+| Length | 4B | 消息体长度 |
+| Reserved | 2B | 保留字段 |
+
+消息类型：REGISTER(1), HEARTBEAT(2), DATA(3), ERROR(4), REGISTER_ACK(5), HEARTBEAT_ACK(6)
+
+## License
+
+MIT License
