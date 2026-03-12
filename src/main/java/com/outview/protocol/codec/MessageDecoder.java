@@ -17,6 +17,9 @@ import java.util.List;
 @Slf4j
 public class MessageDecoder extends ByteToMessageDecoder {
 
+    private int consecutiveErrors = 0;
+    private static final int MAX_CONSECUTIVE_ERRORS = 5;
+
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
         // 至少需要 HEADER_LENGTH 字节才能读取头部
@@ -30,12 +33,26 @@ public class MessageDecoder extends ByteToMessageDecoder {
         // 读取 Magic Number
         int magic = in.readInt();
         if (magic != ProtocolConstants.MAGIC_NUMBER) {
-            log.error("Invalid magic number: 0x{}, expected: 0x{}",
+            consecutiveErrors++;
+            log.warn("Invalid magic number: 0x{}, expected: 0x{} (consecutive errors: {})",
                     Integer.toHexString(magic).toUpperCase(),
-                    Integer.toHexString(ProtocolConstants.MAGIC_NUMBER).toUpperCase());
-            ctx.close();
+                    Integer.toHexString(ProtocolConstants.MAGIC_NUMBER).toUpperCase(),
+                    consecutiveErrors);
+
+            // 尝试跳过一个字节重新同步
+            in.resetReaderIndex();
+            in.skipBytes(1);
+
+            // 如果连续错误太多，关闭连接
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                log.error("Too many consecutive decode errors, closing connection");
+                ctx.close();
+            }
             return;
         }
+
+        // 重置连续错误计数
+        consecutiveErrors = 0;
 
         // 读取版本和类型
         byte version = in.readByte();

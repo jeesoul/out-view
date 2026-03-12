@@ -59,7 +59,8 @@ type Client struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu sync.Mutex
+	mu       sync.Mutex // Protects writer
+	writeMu  sync.Mutex // Dedicated mutex for write operations
 
 	// Callbacks
 	OnStateChange    func(old, new State)
@@ -111,6 +112,9 @@ func (c *Client) Connect() error {
 
 // Register sends a registration request
 func (c *Client) Register() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -138,6 +142,9 @@ func (c *Client) Register() error {
 
 // SendHeartbeat sends a heartbeat message
 func (c *Client) SendHeartbeat() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -165,6 +172,9 @@ func (c *Client) SendHeartbeat() error {
 
 // SendData sends a data message
 func (c *Client) SendData(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -469,6 +479,9 @@ func (c *Client) closeConnection(connectionID string) {
 
 // sendRaw sends a raw protocol message
 func (c *Client) sendRaw(msg *protocol.Message) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
