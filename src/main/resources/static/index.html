@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>outView 管理后台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .header p {
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #667eea;
+        }
+        .stat-card .label {
+            color: #666;
+            margin-top: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .status-online {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .status-offline {
+            color: #dc3545;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5a6fd6;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+        .token-result {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+            display: none;
+        }
+        .token-result.show {
+            display: block;
+        }
+        .token-result code {
+            display: block;
+            background: #e9ecef;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 5px;
+            word-break: break-all;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>outView 管理后台</h1>
+            <p>远程桌面内网穿透服务管理系统</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 统计卡片 -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="value" id="onlineCount">-</div>
+                <div class="label">在线设备</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="totalCount">-</div>
+                <div class="label">总设备数</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="mappingCount">-</div>
+                <div class="label">端口映射</div>
+            </div>
+        </div>
+
+        <!-- Token 管理 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Token 管理</h2>
+                <button class="btn btn-primary" onclick="generateToken()">生成新 Token</button>
+            </div>
+            <div class="card-body">
+                <div id="tokenResult" class="token-result">
+                    <strong>新 Token 已生成：</strong>
+                    <p style="margin-top:10px;"><strong>设备ID：</strong><code id="newDeviceId"></code></p>
+                    <p><strong>Token：</strong><code id="newToken"></code></p>
+                    <p style="margin-top:10px;color:#666;font-size:12px;">请妥善保管此信息，客户端连接时需要使用</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 在线设备 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>在线设备</h2>
+                <button class="btn btn-primary" onclick="loadDevices()">刷新</button>
+            </div>
+            <div class="card-body">
+                <div id="deviceLoading" class="loading">加载中...</div>
+                <table id="deviceTable" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>设备ID</th>
+                            <th>对外端口</th>
+                            <th>本地端口</th>
+                            <th>状态</th>
+                            <th>最后心跳</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deviceBody"></tbody>
+                </table>
+                <div id="deviceEmpty" class="empty" style="display:none;">暂无在线设备</div>
+            </div>
+        </div>
+
+        <!-- 端口映射 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>端口映射</h2>
+            </div>
+            <div class="card-body">
+                <table id="mappingTable">
+                    <thead>
+                        <tr>
+                            <th>对外端口</th>
+                            <th>设备ID</th>
+                            <th>目标端口</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mappingBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // 加载设备列表
+        async function loadDevices() {
+            const loading = document.getElementById('deviceLoading');
+            const table = document.getElementById('deviceTable');
+            const empty = document.getElementById('deviceEmpty');
+            const body = document.getElementById('deviceBody');
+
+            loading.style.display = 'block';
+            table.style.display = 'none';
+            empty.style.display = 'none';
+
+            try {
+                const res = await fetch(API_BASE + '/api/devices');
+                const data = await res.json();
+
+                // 更新统计
+                document.getElementById('onlineCount').textContent = data.online || 0;
+                document.getElementById('totalCount').textContent = data.total || 0;
+
+                if (data.devices && data.devices.length > 0) {
+                    body.innerHTML = data.devices.map(d => `
+                        <tr>
+                            <td><code>${d.deviceId}</code></td>
+                            <td>${d.externalPort}</td>
+                            <td>${d.localPort}</td>
+                            <td class="status-${d.status.toLowerCase()}">${d.status}</td>
+                            <td>${d.lastHeartbeat ? new Date(d.lastHeartbeat).toLocaleString() : '-'}</td>
+                            <td>
+                                <button class="btn btn-danger btn-sm" onclick="disconnectDevice('${d.deviceId}')">断开</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                    table.style.display = 'table';
+                } else {
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Failed to load devices:', e);
+                empty.textContent = '加载失败: ' + e.message;
+                empty.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 加载端口映射
+        async function loadMappings() {
+            try {
+                const res = await fetch(API_BASE + '/api/devices/mappings');
+                const data = await res.json();
+
+                document.getElementById('mappingCount').textContent = data.total || 0;
+
+                const body = document.getElementById('mappingBody');
+                if (data.mappings && data.mappings.length > 0) {
+                    body.innerHTML = data.mappings.map(m => `
+                        <tr>
+                            <td><code>${m.externalPort}</code></td>
+                            <td>${m.deviceId}</td>
+                            <td>${m.targetPort}</td>
+                            <td>${m.createTime ? new Date(m.createTime).toLocaleString() : '-'}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load mappings:', e);
+            }
+        }
+
+        // 生成 Token
+        async function generateToken() {
+            try {
+                const res = await fetch(API_BASE + '/api/tokens', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('newDeviceId').textContent = data.deviceId;
+                    document.getElementById('newToken').textContent = data.token;
+                    document.getElementById('tokenResult').classList.add('show');
+                }
+            } catch (e) {
+                alert('生成失败: ' + e.message);
+            }
+        }
+
+        // 断开设备
+        async function disconnectDevice(deviceId) {
+            if (!confirm('确定要断开设备 ' + deviceId + ' 吗？')) return;
+
+            try {
+                await fetch(API_BASE + '/api/devices/' + deviceId, { method: 'DELETE' });
+                loadDevices();
+                loadMappings();
+            } catch (e) {
+                alert('断开失败: ' + e.message);
+            }
+        }
+
+        // 初始化
+        loadDevices();
+        loadMappings();
+
+        // 自动刷新
+        setInterval(() => {
+            loadDevices();
+            loadMappings();
+        }, 10000);
+    </script>
+</body>
+</html>

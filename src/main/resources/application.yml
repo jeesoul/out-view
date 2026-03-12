@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: outview-server
+  main:
+    allow-circular-references: true
+
+# outView 配置
+outview:
+  # Netty 控制端口 (客户端注册/心跳)
+  control-port: 7000
+  # 数据端口范围 (RDP 转发)
+  data-port-start: 6000
+  data-port-end: 6500
+  # 心跳超时时间 (秒)
+  heartbeat-timeout: 90
+  # 心跳间隔 (秒)
+  heartbeat-interval: 30
+  # Token 有效期 (天)
+  token-expire-days: 30
+
+  # SSL/TLS 配置
+  ssl:
+    # 是否启用 SSL/TLS (生产环境建议启用)
+    enabled: false
+    # 使用自签名证书 (仅用于开发/测试环境，生产环境请使用 CA 签名的证书)
+    use-self-signed: true
+    # 自签名证书 CN (Common Name)
+    self-signed-cn: outview-server
+    # 自签名证书有效期 (天)
+    self-signed-validity-days: 365
+    # 以下配置用于生产环境 (取消注释并配置)
+    # cert-path: file:/path/to/cert.pem
+    # key-path: file:/path/to/key.pem
+    # key-password: your-key-password
+    # trust-cert-path: file:/path/to/trust.pem
+    # need-client-auth: false
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.outview: DEBUG
+    io.netty: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
