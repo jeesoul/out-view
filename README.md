@@ -102,14 +102,35 @@ java -jar target/outview-server.jar
 
 ### 3. 运行客户端
 
-**命令行方式：**
-```bash
+**Windows:**
+```cmd
 outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+```
+
+**macOS:**
+```bash
+# 添加执行权限
+chmod +x outview-client-darwin-arm64
+
+# 运行（M1/M2 芯片）
+./outview-client-darwin-arm64 -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+
+# Intel 芯片
+./outview-client-darwin-amd64 -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+```
+
+**Linux:**
+```bash
+# 添加执行权限
+chmod +x outview-client-linux-amd64
+
+# 运行
+./outview-client-linux-amd64 -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
 ```
 
 **配置文件方式：**
 
-创建 `config.txt`（与 exe 同目录）：
+创建 `config.txt`（与客户端同目录）：
 ```
 host=your-server.com
 port=7000
@@ -118,7 +139,7 @@ token=your-token
 local-port=3389
 ```
 
-双击 `outview-client.exe` 即可自动读取配置
+Windows 双击运行，macOS/Linux 直接执行即可自动读取配置。
 
 ### 4. 连接远程桌面
 
