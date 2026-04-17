@@ -124,7 +124,14 @@ public class RawDataHandler extends ChannelInboundHandlerAdapter {
 
             // 构建带连接ID的数据转发消息并发送给客户端
             ProtocolMessage proxyMsg = ProtocolMessage.dataWithConnectionId(connectionId, data);
-            session.getChannel().writeAndFlush(proxyMsg);
+            Channel clientChannel = session.getChannel();
+            if (clientChannel == null || !clientChannel.isActive()) {
+                log.warn("Target client channel inactive: deviceId={}, connectionId={}",
+                        session.getDeviceId(), connectionId);
+                ctx.close();
+                return;
+            }
+            clientChannel.writeAndFlush(proxyMsg);
 
             log.debug("Data forwarded to device: deviceId={}, connectionId={}, length={}",
                     session.getDeviceId(), connectionId, data.length);
@@ -136,7 +143,6 @@ public class RawDataHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        // 清理连接映射
         ClientSession session = userToSessionMap.remove(ctx.channel());
         String connectionId = userToConnectionIdMap.remove(ctx.channel());
         if (connectionId != null) {
@@ -144,9 +150,17 @@ public class RawDataHandler extends ChannelInboundHandlerAdapter {
         }
 
         if (session != null) {
-            InetSocketAddress localAddress = (InetSocketAddress) ctx.channel().localAddress();
-            int localPort = localAddress.getPort();
-            dataPortService.removeConnection(localPort, ctx.channel());
+            int localPort = session.getExternalPort();
+            if (localPort <= 0) {
+                InetSocketAddress localAddress = (InetSocketAddress) ctx.channel().localAddress();
+                if (localAddress != null) {
+                    localPort = localAddress.getPort();
+                }
+            }
+
+            if (localPort > 0) {
+                dataPortService.removeConnection(localPort, ctx.channel());
+            }
 
             log.info("User disconnected: port={}, deviceId={}, connectionId={}",
                     localPort, session.getDeviceId(), connectionId);

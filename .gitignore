@@ -66,3 +66,12 @@ DEPLOYMENT.md
 
 # Release packages (never commit)
 release/
+
+# Client binaries
+client/outview-client-*
+
+# Database files
+data/
+
+# Local logs
+客户端收集到错误日志.txt
