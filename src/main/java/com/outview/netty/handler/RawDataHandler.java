@@ -103,8 +103,21 @@ public class RawDataHandler extends ChannelInboundHandlerAdapter {
 
         ByteBuf buf = (ByteBuf) msg;
         try {
-            // 获取对应的客户端会话
+            // 获取对应的客户端会话（优先从缓存取，失效时从 SessionStore 刷新）
             ClientSession session = userToSessionMap.get(ctx.channel());
+            if (session == null || !session.isActive()) {
+                InetSocketAddress localAddress = (InetSocketAddress) ctx.channel().localAddress();
+                if (localAddress != null) {
+                    String deviceId = portMappingService.getDeviceByPort(localAddress.getPort());
+                    if (deviceId != null) {
+                        ClientSession fresh = sessionStore.getSession(deviceId);
+                        if (fresh != null && fresh.isActive()) {
+                            userToSessionMap.put(ctx.channel(), fresh);
+                            session = fresh;
+                        }
+                    }
+                }
+            }
             if (session == null || !session.isActive()) {
                 log.warn("No active session for channel, closing");
                 ctx.close();
@@ -126,9 +139,7 @@ public class RawDataHandler extends ChannelInboundHandlerAdapter {
             ProtocolMessage proxyMsg = ProtocolMessage.dataWithConnectionId(connectionId, data);
             Channel clientChannel = session.getChannel();
             if (clientChannel == null || !clientChannel.isActive()) {
-                log.warn("Target client channel inactive: deviceId={}, connectionId={}",
-                        session.getDeviceId(), connectionId);
-                ctx.close();
+                log.warn("Target client channel inactive, will retry on next packet: deviceId={}", session.getDeviceId());
                 return;
             }
             clientChannel.writeAndFlush(proxyMsg);
