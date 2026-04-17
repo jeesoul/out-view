@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/outview/client/internal/logger"
 	"github.com/outview/client/internal/protocol"
 )
 
@@ -345,7 +346,7 @@ func (c *Client) handleData(msg *protocol.Message) {
 		return
 	}
 
-	fmt.Printf("[Debug] Received data: connectionId=%s, len=%d\n", packet.ConnectionID, len(packet.Data))
+	logger.Debug("Received data: connectionId=%s, len=%d", packet.ConnectionID, len(packet.Data))
 
 	if c.OnDataReceived != nil {
 		c.OnDataReceived(packet.Data)
@@ -367,11 +368,11 @@ func (c *Client) forwardToLocal(connectionID string, data []byte) {
 	// Get or create connection for this connection ID
 	connObj := c.getOrCreateConnection(connectionID)
 	if connObj == nil {
-		fmt.Printf("[Error] Failed to create connection for connectionId=%s\n", connectionID)
+		logger.Error("Failed to create connection for connectionId=%s", connectionID)
 		return
 	}
 
-	fmt.Printf("[Debug] Writing %d bytes to local RDP for connectionId=%s\n", len(data), connectionID)
+	logger.Debug("Writing %d bytes to local RDP for connectionId=%s", len(data), connectionID)
 
 	// Write data to local service
 	if _, err := connObj.conn.Write(data); err != nil {
@@ -392,7 +393,7 @@ func (c *Client) getOrCreateConnection(connectionID string) *connectionConn {
 		return connObj
 	}
 
-	fmt.Printf("[Debug] Creating new connection to %s for connectionId=%s\n", c.config.LocalAddr(), connectionID)
+	logger.Debug("Creating new connection to %s for connectionId=%s", c.config.LocalAddr(), connectionID)
 
 	// Create new connection to local RDP
 	conn, err := net.DialTimeout("tcp", c.config.LocalAddr(), 5*time.Second)
@@ -409,7 +410,7 @@ func (c *Client) getOrCreateConnection(connectionID string) *connectionConn {
 	}
 	c.localConnections[connectionID] = connObj
 
-	fmt.Printf("[Debug] Connected to local RDP for connectionId=%s\n", connectionID)
+	logger.Debug("Connected to local RDP for connectionId=%s", connectionID)
 
 	// Start goroutine to read from local service and send back to server
 	c.wg.Add(1)
@@ -423,7 +424,7 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 	defer c.wg.Done()
 	defer c.closeConnection(connectionID)
 
-	fmt.Printf("[Debug] Started reading from local RDP for connectionId=%s\n", connectionID)
+	logger.Debug("Started reading from local RDP for connectionId=%s", connectionID)
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -442,11 +443,11 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 				continue
 			}
 			// Connection closed or error
-			fmt.Printf("[Debug] Local RDP connection closed for connectionId=%s: %v\n", connectionID, err)
+			logger.Error("Local RDP connection closed for connectionId=%s: %v", connectionID, err)
 			return
 		}
 
-		fmt.Printf("[Debug] Received %d bytes from local RDP for connectionId=%s\n", n, connectionID)
+		logger.Debug("Received %d bytes from local RDP for connectionId=%s", n, connectionID)
 
 		// Send data back to server with connection ID
 		msg := protocol.NewDataMessageWithConnectionID(connectionID, buf[:n])
@@ -456,7 +457,7 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 			}
 			return
 		}
-		fmt.Printf("[Debug] Sent %d bytes to server for connectionId=%s\n", n, connectionID)
+		logger.Debug("Sent %d bytes to server for connectionId=%s", n, connectionID)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/outview/client/internal/client"
+	"github.com/outview/client/internal/logger"
 )
 
 var (
@@ -16,6 +17,13 @@ var (
 )
 
 func main() {
+	if err := logger.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "[Error] Failed to initialize logger: %v\n", err)
+	}
+	defer logger.Close()
+
+	logger.Info("outView Client starting, version=%s, build=%s", Version, BuildDate)
+
 	// Parse command line flags
 	serverHost := flag.String("host", "", "Server host address")
 	serverPort := flag.Int("port", 7000, "Server control port")
