@@ -2,7 +2,7 @@
 
 All notable changes to the outView project will be documented in this file.
 
-## [SNAPSHOT-1.0.2] - 2026-03-12
+## [1.0.2] - 2026-03-12
 
 ### New Features
 
@@ -79,7 +79,7 @@ All notable changes to the outView project will be documented in this file.
 
 ## 版本规划
 
-### SNAPSHOT-1.0.2 (当前开发中)
+### 1.0.2 (正式发布)
 
 - [x] 修复并发写入导致连接断开
 - [x] 预设配置管理功能
@@ -90,7 +90,7 @@ All notable changes to the outView project will be documented in this file.
 
 ### 1.0.1 (计划中)
 
-- 整合SNAPSHOT-1.0.2的bug修复和功能
+- 整合1.0.2的bug修复和功能
 - 发布稳定版本
 
 ---

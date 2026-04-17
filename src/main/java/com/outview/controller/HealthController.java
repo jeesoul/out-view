@@ -24,7 +24,7 @@ public class HealthController {
     public Map<String, Object> info() {
         Map<String, Object> result = new HashMap<>();
         result.put("name", "outView Server");
-        result.put("version", "1.0.2-SNAPSHOT");
+        result.put("version", "1.0.2");
         result.put("description", "Remote Desktop Tunneling Server");
         return result;
     }

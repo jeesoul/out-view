@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "1.0.2-SNAPSHOT"
+	Version   = "1.0.2"
 	BuildDate = "unknown"
 )
 
