@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/outview/client/internal/logger"
 	"github.com/outview/client/internal/protocol"
 )
 
@@ -20,6 +21,7 @@ const (
 	StateConnecting
 	StateConnected
 	StateRegistered
+	StateReconnecting
 )
 
 // String returns the string representation of the state
@@ -33,6 +35,8 @@ func (s State) String() string {
 		return "Connected"
 	case StateRegistered:
 		return "Registered"
+	case StateReconnecting:
+		return "Reconnecting"
 	default:
 		return "Unknown"
 	}
@@ -46,7 +50,7 @@ type Client struct {
 	reader *bufio.Reader
 	writer *bufio.Writer
 
-	state     atomic.Int32
+	state        atomic.Int32
 	externalPort int
 
 	proxyManager *ProxyManager
@@ -59,7 +63,11 @@ type Client struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu sync.Mutex
+	mu      sync.Mutex // protects conn/reader/writer
+	writeMu sync.Mutex // serializes writes
+
+	// reconnect signal: readLoop sends here when connection drops
+	reconnectCh chan struct{}
 
 	// Callbacks
 	OnStateChange    func(old, new State)
@@ -77,17 +85,15 @@ func NewClient(config *Config) *Client {
 		localConnections: make(map[string]*connectionConn),
 		ctx:              ctx,
 		cancel:           cancel,
+		reconnectCh:      make(chan struct{}, 1),
 	}
 }
 
-// Connect connects to the server
-func (c *Client) Connect() error {
+// connect establishes a TCP connection to the server (no registration).
+func (c *Client) connect() error {
 	c.setState(StateConnecting)
 
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-	}
-
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	conn, err := dialer.DialContext(c.ctx, "tcp", c.config.ServerAddr())
 	if err != nil {
 		c.setState(StateDisconnected)
@@ -101,16 +107,19 @@ func (c *Client) Connect() error {
 	c.mu.Unlock()
 
 	c.setState(StateConnected)
-
-	// Start read goroutine
-	c.wg.Add(1)
-	go c.readLoop()
-
 	return nil
+}
+
+// Connect connects to the server (kept for backward compat).
+func (c *Client) Connect() error {
+	return c.connect()
 }
 
 // Register sends a registration request
 func (c *Client) Register() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -129,15 +138,14 @@ func (c *Client) Register() error {
 		return fmt.Errorf("failed to send register message: %w", err)
 	}
 
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush: %w", err)
-	}
-
-	return nil
+	return writer.Flush()
 }
 
 // SendHeartbeat sends a heartbeat message
 func (c *Client) SendHeartbeat() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -156,15 +164,14 @@ func (c *Client) SendHeartbeat() error {
 		return fmt.Errorf("failed to send heartbeat message: %w", err)
 	}
 
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush: %w", err)
-	}
-
-	return nil
+	return writer.Flush()
 }
 
 // SendData sends a data message
 func (c *Client) SendData(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -179,32 +186,33 @@ func (c *Client) SendData(data []byte) error {
 		return fmt.Errorf("failed to send data message: %w", err)
 	}
 
-	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush: %w", err)
-	}
-
-	return nil
+	return writer.Flush()
 }
 
-// Start starts the client with auto heartbeat
+// Start connects, registers, and starts background loops.
 func (c *Client) Start() error {
-	if err := c.Connect(); err != nil {
+	if err := c.connect(); err != nil {
 		return err
 	}
-
-	// Send register
 	if err := c.Register(); err != nil {
 		return err
 	}
 
-	// Start heartbeat goroutine
+	c.wg.Add(1)
+	go c.readLoop()
+
 	c.wg.Add(1)
 	go c.heartbeatLoop()
+
+	if c.config.AutoReconnect {
+		c.wg.Add(1)
+		go c.reconnectLoop()
+	}
 
 	return nil
 }
 
-// Stop stops the client
+// Stop shuts down the client.
 func (c *Client) Stop() {
 	c.cancel()
 
@@ -215,7 +223,6 @@ func (c *Client) Stop() {
 	}
 	c.mu.Unlock()
 
-	// Close all local connections
 	c.connMu.Lock()
 	for _, connObj := range c.localConnections {
 		connObj.once.Do(func() {
@@ -248,34 +255,141 @@ func (c *Client) setState(state State) {
 	}
 }
 
+// closeConn closes the underlying TCP connection and clears reader/writer.
+func (c *Client) closeConn() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+		c.reader = nil
+		c.writer = nil
+	}
+}
+
+// closeAllLocalConns closes all per-connectionID local RDP connections.
+func (c *Client) closeAllLocalConns() {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	for id, connObj := range c.localConnections {
+		connObj.once.Do(func() {
+			close(connObj.closeCh)
+			connObj.conn.Close()
+		})
+		delete(c.localConnections, id)
+	}
+}
+
 func (c *Client) readLoop() {
 	defer c.wg.Done()
 
-	decoder := protocol.NewDecoder(c.reader)
-
 	for {
-		select {
-		case <-c.ctx.Done():
+		c.mu.Lock()
+		reader := c.reader
+		c.mu.Unlock()
+
+		if reader == nil {
 			return
-		default:
 		}
 
-		msg, err := decoder.Decode()
-		if err != nil {
+		decoder := protocol.NewDecoder(reader)
+		for {
 			select {
 			case <-c.ctx.Done():
 				return
 			default:
 			}
 
-			c.setState(StateDisconnected)
-			if c.OnError != nil {
-				c.OnError(fmt.Errorf("read error: %w", err))
+			msg, err := decoder.Decode()
+			if err != nil {
+				select {
+				case <-c.ctx.Done():
+					return
+				default:
+				}
+
+				logger.Error("Connection lost: %v", err)
+				c.setState(StateDisconnected)
+				c.closeConn()
+				c.closeAllLocalConns()
+
+				// signal reconnectLoop (non-blocking)
+				select {
+				case c.reconnectCh <- struct{}{}:
+				default:
+				}
+				return
 			}
+
+			c.handleMessage(msg)
+		}
+	}
+}
+
+// reconnectLoop waits for a disconnect signal and re-establishes the connection
+// using exponential backoff. It respects ctx cancellation.
+func (c *Client) reconnectLoop() {
+	defer c.wg.Done()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-c.reconnectCh:
+		}
+
+		if !c.config.AutoReconnect {
 			return
 		}
 
-		c.handleMessage(msg)
+		delay := time.Duration(c.config.RetryDelay) * time.Second
+		maxDelay := 60 * time.Second
+
+		for attempt := 1; ; attempt++ {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+
+			if c.config.MaxRetries > 0 && attempt > c.config.MaxRetries {
+				logger.Error("Max reconnect attempts (%d) reached, giving up", c.config.MaxRetries)
+				if c.OnError != nil {
+					c.OnError(fmt.Errorf("max reconnect attempts reached"))
+				}
+				return
+			}
+
+			c.setState(StateReconnecting)
+			logger.Info("Reconnecting (attempt %d)...", attempt)
+
+			if err := c.connect(); err != nil {
+				logger.Error("Reconnect failed: %v", err)
+				// exponential backoff, cap at maxDelay
+				delay *= 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				continue
+			}
+
+			if err := c.Register(); err != nil {
+				logger.Error("Re-register failed: %v", err)
+				c.closeConn()
+				delay *= 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				continue
+			}
+
+			logger.Info("Reconnected successfully")
+
+			// restart readLoop for the new connection
+			c.wg.Add(1)
+			go c.readLoop()
+			break
+		}
 	}
 }
 
@@ -284,7 +398,7 @@ func (c *Client) handleMessage(msg *protocol.Message) {
 	case protocol.TypeRegisterAck:
 		c.handleRegisterAck(msg)
 	case protocol.TypeHeartbeatAck:
-		c.handleHeartbeatAck(msg)
+		// nothing to do
 	case protocol.TypeData:
 		c.handleData(msg)
 	case protocol.TypeError:
@@ -321,12 +435,7 @@ func (c *Client) handleRegisterAck(msg *protocol.Message) {
 	}
 }
 
-func (c *Client) handleHeartbeatAck(msg *protocol.Message) {
-	// Heartbeat acknowledged, nothing special to do
-}
-
 func (c *Client) handleData(msg *protocol.Message) {
-	// Parse the data packet to get connection ID
 	packet, err := protocol.ParseDataPacket(msg.Body)
 	if err != nil {
 		if c.OnError != nil {
@@ -335,35 +444,32 @@ func (c *Client) handleData(msg *protocol.Message) {
 		return
 	}
 
-	fmt.Printf("[Debug] Received data: connectionId=%s, len=%d\n", packet.ConnectionID, len(packet.Data))
+	logger.Debug("Received data: connectionId=%s, len=%d", packet.ConnectionID, len(packet.Data))
 
 	if c.OnDataReceived != nil {
 		c.OnDataReceived(packet.Data)
 	}
 
-	// Forward to local service using connection ID
 	c.forwardToLocal(packet.ConnectionID, packet.Data)
 }
 
 // connectionConn tracks a connection to local service
 type connectionConn struct {
-	conn     net.Conn
-	closeCh  chan struct{}
-	once     sync.Once
+	conn    net.Conn
+	closeCh chan struct{}
+	once    sync.Once
 }
 
 // forwardToLocal forwards data to local service, maintaining connection per connectionID
 func (c *Client) forwardToLocal(connectionID string, data []byte) {
-	// Get or create connection for this connection ID
 	connObj := c.getOrCreateConnection(connectionID)
 	if connObj == nil {
-		fmt.Printf("[Error] Failed to create connection for connectionId=%s\n", connectionID)
+		logger.Error("Failed to create connection for connectionId=%s", connectionID)
 		return
 	}
 
-	fmt.Printf("[Debug] Writing %d bytes to local RDP for connectionId=%s\n", len(data), connectionID)
+	logger.Debug("Writing %d bytes to local RDP for connectionId=%s", len(data), connectionID)
 
-	// Write data to local service
 	if _, err := connObj.conn.Write(data); err != nil {
 		if c.OnError != nil {
 			c.OnError(fmt.Errorf("failed to write to local service: %w", err))
@@ -377,14 +483,12 @@ func (c *Client) getOrCreateConnection(connectionID string) *connectionConn {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
-	// Check if connection already exists
 	if connObj, ok := c.localConnections[connectionID]; ok {
 		return connObj
 	}
 
-	fmt.Printf("[Debug] Creating new connection to %s for connectionId=%s\n", c.config.LocalAddr(), connectionID)
+	logger.Debug("Creating new connection to %s for connectionId=%s", c.config.LocalAddr(), connectionID)
 
-	// Create new connection to local RDP
 	conn, err := net.DialTimeout("tcp", c.config.LocalAddr(), 5*time.Second)
 	if err != nil {
 		if c.OnError != nil {
@@ -399,9 +503,6 @@ func (c *Client) getOrCreateConnection(connectionID string) *connectionConn {
 	}
 	c.localConnections[connectionID] = connObj
 
-	fmt.Printf("[Debug] Connected to local RDP for connectionId=%s\n", connectionID)
-
-	// Start goroutine to read from local service and send back to server
 	c.wg.Add(1)
 	go c.readFromLocal(connectionID, connObj)
 
@@ -413,8 +514,6 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 	defer c.wg.Done()
 	defer c.closeConnection(connectionID)
 
-	fmt.Printf("[Debug] Started reading from local RDP for connectionId=%s\n", connectionID)
-
 	buf := make([]byte, 32*1024)
 	for {
 		select {
@@ -425,20 +524,17 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 		default:
 		}
 
-		connObj.conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+		connObj.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		n, err := connObj.conn.Read(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			// Connection closed or error
-			fmt.Printf("[Debug] Local RDP connection closed for connectionId=%s: %v\n", connectionID, err)
+			logger.Error("Local RDP connection closed for connectionId=%s: %v", connectionID, err)
+			_ = c.sendRaw(protocol.NewCloseConnectionMessage(connectionID))
 			return
 		}
 
-		fmt.Printf("[Debug] Received %d bytes from local RDP for connectionId=%s\n", n, connectionID)
-
-		// Send data back to server with connection ID
 		msg := protocol.NewDataMessageWithConnectionID(connectionID, buf[:n])
 		if err := c.sendRaw(msg); err != nil {
 			if c.OnError != nil {
@@ -446,7 +542,6 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 			}
 			return
 		}
-		fmt.Printf("[Debug] Sent %d bytes to server for connectionId=%s\n", n, connectionID)
 	}
 }
 
@@ -469,6 +564,9 @@ func (c *Client) closeConnection(connectionID string) {
 
 // sendRaw sends a raw protocol message
 func (c *Client) sendRaw(msg *protocol.Message) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.Lock()
 	writer := c.writer
 	c.mu.Unlock()
@@ -510,10 +608,14 @@ func (c *Client) heartbeatLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
+			// only send heartbeat when registered or connected
+			state := c.GetState()
+			if state != StateRegistered && state != StateConnected {
+				continue
+			}
 			if err := c.SendHeartbeat(); err != nil {
-				if c.OnError != nil {
-					c.OnError(fmt.Errorf("heartbeat failed: %w", err))
-				}
+				// connection is gone; reconnectLoop will handle it
+				logger.Debug("Heartbeat skipped (connection unavailable): %v", err)
 			}
 		}
 	}

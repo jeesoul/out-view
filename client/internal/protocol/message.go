@@ -1,7 +1,7 @@
 package protocol
 
 import (
-	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -9,11 +9,11 @@ import (
 
 // MessageHeader represents the protocol message header (12 bytes)
 type MessageHeader struct {
-	Magic    int    // 4 bytes
-	Version  byte   // 1 byte
-	Type     byte   // 1 byte
-	Length   int    // 4 bytes
-	Reserved int16  // 2 bytes
+	Magic    int   // 4 bytes
+	Version  byte  // 1 byte
+	Type     byte  // 1 byte
+	Length   int   // 4 bytes
+	Reserved int16 // 2 bytes
 }
 
 // Message represents a complete protocol message
@@ -42,12 +42,6 @@ type HeartbeatRequest struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
-// HeartbeatResponse represents a heartbeat response body
-type HeartbeatResponse struct {
-	Success   bool  `json:"success"`
-	Timestamp int64 `json:"timestamp"`
-}
-
 // ErrorResponse represents an error response body
 type ErrorResponse struct {
 	Message string `json:"message"`
@@ -67,11 +61,10 @@ func NewRegisterMessage(deviceID, token string, localPort int) (*Message, error)
 
 	return &Message{
 		Header: &MessageHeader{
-			Magic:    MagicNumber,
-			Version:  Version,
-			Type:     TypeRegister,
-			Length:   len(body),
-			Reserved: 0,
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeRegister,
+			Length:  len(body),
 		},
 		Body: body,
 	}, nil
@@ -79,9 +72,7 @@ func NewRegisterMessage(deviceID, token string, localPort int) (*Message, error)
 
 // NewHeartbeatMessage creates a new heartbeat message
 func NewHeartbeatMessage() (*Message, error) {
-	req := HeartbeatRequest{
-		Timestamp: time.Now().UnixMilli(),
-	}
+	req := HeartbeatRequest{Timestamp: time.Now().UnixMilli()}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal heartbeat request: %w", err)
@@ -89,25 +80,23 @@ func NewHeartbeatMessage() (*Message, error) {
 
 	return &Message{
 		Header: &MessageHeader{
-			Magic:    MagicNumber,
-			Version:  Version,
-			Type:     TypeHeartbeat,
-			Length:   len(body),
-			Reserved: 0,
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeHeartbeat,
+			Length:  len(body),
 		},
 		Body: body,
 	}, nil
 }
 
-// NewDataMessage creates a new data message
+// NewDataMessage creates a plain data message (no connection ID).
 func NewDataMessage(data []byte) *Message {
 	return &Message{
 		Header: &MessageHeader{
-			Magic:    MagicNumber,
-			Version:  Version,
-			Type:     TypeData,
-			Length:   len(data),
-			Reserved: 0,
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeData,
+			Length:  len(data),
 		},
 		Body: data,
 	}
@@ -118,15 +107,6 @@ func ParseRegisterResponse(body []byte) (*RegisterResponse, error) {
 	var resp RegisterResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse register response: %w", err)
-	}
-	return &resp, nil
-}
-
-// ParseHeartbeatResponse parses a heartbeat response from body
-func ParseHeartbeatResponse(body []byte) (*HeartbeatResponse, error) {
-	var resp HeartbeatResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse heartbeat response: %w", err)
 	}
 	return &resp, nil
 }
@@ -142,50 +122,65 @@ func ParseErrorResponse(body []byte) (*ErrorResponse, error) {
 
 // DataPacket represents a data packet with connection ID
 type DataPacket struct {
-	ConnectionID string `json:"connectionId"`
-	Data         []byte `json:"-"`
+	ConnectionID string
+	Data         []byte
 }
 
-// DataPacketJSON is used for JSON unmarshaling
-type DataPacketJSON struct {
-	ConnectionID string `json:"connectionId"`
-	Data         string `json:"data"`
-}
-
-// ParseDataPacket parses a data message body with connection ID
-// Format: {"connectionId":"xxx","data":"base64_encoded_data"}
-func ParseDataPacket(body []byte) (*DataPacket, error) {
-	var raw DataPacketJSON
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse data packet: %w", err)
-	}
-
-	data, err := base64.StdEncoding.DecodeString(raw.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
-	}
-
-	return &DataPacket{
-		ConnectionID: raw.ConnectionID,
-		Data:         data,
-	}, nil
-}
-
-// NewDataMessageWithConnectionID creates a data message with connection ID
+// NewDataMessageWithConnectionID creates a data message with connection ID.
+//
+// Binary body format:
+//
+//	[2B big-endian: connectionId length][connectionId bytes][payload bytes]
 func NewDataMessageWithConnectionID(connectionID string, data []byte) *Message {
-	packet := map[string]interface{}{
-		"connectionId": connectionID,
-		"data":         base64.StdEncoding.EncodeToString(data),
-	}
-	body, _ := json.Marshal(packet)
+	idBytes := []byte(connectionID)
+	body := make([]byte, 2+len(idBytes)+len(data))
+	binary.BigEndian.PutUint16(body[0:2], uint16(len(idBytes)))
+	copy(body[2:], idBytes)
+	copy(body[2+len(idBytes):], data)
 
 	return &Message{
 		Header: &MessageHeader{
-			Magic:    MagicNumber,
-			Version:  Version,
-			Type:     TypeData,
-			Length:   len(body),
-			Reserved: 0,
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeData,
+			Length:  len(body),
+		},
+		Body: body,
+	}
+}
+
+// ParseDataPacket parses a data message body with connection ID.
+//
+// Binary body format:
+//
+//	[2B big-endian: connectionId length][connectionId bytes][payload bytes]
+func ParseDataPacket(body []byte) (*DataPacket, error) {
+	if len(body) < 2 {
+		return nil, fmt.Errorf("data packet too short: %d bytes", len(body))
+	}
+	idLen := int(binary.BigEndian.Uint16(body[0:2]))
+	if 2+idLen > len(body) {
+		return nil, fmt.Errorf("data packet connectionId length %d exceeds body", idLen)
+	}
+	connectionID := string(body[2 : 2+idLen])
+	data := body[2+idLen:]
+	return &DataPacket{ConnectionID: connectionID, Data: data}, nil
+}
+
+// NewCloseConnectionMessage creates a close-connection notification.
+// Body format: same binary framing — connectionId with zero-length payload.
+func NewCloseConnectionMessage(connectionID string) *Message {
+	idBytes := []byte(connectionID)
+	body := make([]byte, 2+len(idBytes))
+	binary.BigEndian.PutUint16(body[0:2], uint16(len(idBytes)))
+	copy(body[2:], idBytes)
+
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeCloseConnection,
+			Length:  len(body),
 		},
 		Body: body,
 	}

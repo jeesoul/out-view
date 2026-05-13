@@ -8,6 +8,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
@@ -15,7 +16,7 @@ import java.net.InetSocketAddress;
 
 /**
  * Netty 服务端
- * 负责启动控制端口和数据端口
+ * 负责启动控制端口，并将 workerGroup 暴露为 Bean 供 DataPortService 复用
  */
 @Slf4j
 @Component
@@ -32,17 +33,28 @@ public class NettyServer implements CommandLineRunner {
         this.controlChannelInitializer = controlChannelInitializer;
     }
 
+    /**
+     * 将 workerGroup 暴露为 Spring Bean，供 DataPortService 注入复用，
+     * 避免为数据端口重复创建线程池。
+     */
+    @Bean
+    public EventLoopGroup sharedWorkerGroup() {
+        if (workerGroup == null) {
+            workerGroup = new NioEventLoopGroup();
+        }
+        return workerGroup;
+    }
+
     @Override
     public void run(String... args) throws Exception {
         startControlServer();
     }
 
-    /**
-     * 启动控制服务 (客户端注册/心跳)
-     */
     private void startControlServer() {
         bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup();
+        if (workerGroup == null) {
+            workerGroup = new NioEventLoopGroup();
+        }
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
@@ -63,9 +75,6 @@ public class NettyServer implements CommandLineRunner {
         }
     }
 
-    /**
-     * 关闭服务
-     */
     @PreDestroy
     public void shutdown() {
         if (bossGroup != null) {

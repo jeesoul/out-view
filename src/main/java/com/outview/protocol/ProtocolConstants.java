@@ -32,6 +32,7 @@ public final class ProtocolConstants {
     public static final byte TYPE_HEARTBEAT_ACK = 6; // 心跳响应
     public static final byte TYPE_DATA = 3;          // 数据转发
     public static final byte TYPE_ERROR = 4;         // 错误消息
+    public static final byte TYPE_CLOSE_CONNECTION = 7; // 连接关闭通知
 
     /**
      * 最大消息体长度 (10MB)

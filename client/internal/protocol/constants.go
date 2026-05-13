@@ -15,12 +15,13 @@ const MaxBodyLength = 10 * 1024 * 1024
 
 // Message types
 const (
-	TypeRegister     byte = 1 // Registration request
-	TypeHeartbeat    byte = 2 // Heartbeat request
-	TypeData         byte = 3 // Data forward
-	TypeError        byte = 4 // Error message
-	TypeRegisterAck  byte = 5 // Registration response
-	TypeHeartbeatAck byte = 6 // Heartbeat response
+	TypeRegister        byte = 1 // Registration request
+	TypeHeartbeat       byte = 2 // Heartbeat request
+	TypeData            byte = 3 // Data forward
+	TypeError           byte = 4 // Error message
+	TypeRegisterAck     byte = 5 // Registration response
+	TypeHeartbeatAck    byte = 6 // Heartbeat response
+	TypeCloseConnection byte = 7 // Connection close notification
 )
 
 // Default heartbeat interval (30 seconds)
