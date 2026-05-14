@@ -27,9 +27,14 @@ func TestProtocol_EventPayload(t *testing.T) {
 		Event:        EventEstablished,
 		Reason:       "",
 	}
-	data, _ := json.Marshal(evt)
+	data, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got EventPayload
-	json.Unmarshal(data, &got)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
 	if got.Event != EventEstablished {
 		t.Errorf("got event %q, want %q", got.Event, EventEstablished)
 	}
@@ -37,9 +42,14 @@ func TestProtocol_EventPayload(t *testing.T) {
 
 func TestProtocol_ErrorPayload(t *testing.T) {
 	ep := ErrorPayload{ConnectionID: "conn-789", Error: "something went wrong"}
-	data, _ := json.Marshal(ep)
+	data, err := json.Marshal(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got ErrorPayload
-	json.Unmarshal(data, &got)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
 	if got.Error != ep.Error {
 		t.Errorf("got %q, want %q", got.Error, ep.Error)
 	}
@@ -105,9 +115,14 @@ func TestProtocol_SendDataPayload(t *testing.T) {
 
 func TestProtocol_OKPayload(t *testing.T) {
 	orig := OKPayload{ConnectionID: "conn-ok", OK: true}
-	data, _ := json.Marshal(orig)
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got OKPayload
-	json.Unmarshal(data, &got)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
 	if !got.OK || got.ConnectionID != orig.ConnectionID {
 		t.Errorf("OKPayload round-trip failed: %+v", got)
 	}

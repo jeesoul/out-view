@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 )
 
 // HandlerFunc handles a specific IPC message type.
@@ -14,6 +15,7 @@ type HandlerFunc func(conn net.Conn, msg *Message) *Message
 
 // Router dispatches IPC messages to registered handlers.
 type Router struct {
+	mu       sync.RWMutex
 	handlers map[string]HandlerFunc
 	registry *ConnRegistry
 }
@@ -28,13 +30,17 @@ func NewRouter(registry *ConnRegistry) *Router {
 
 // Handle registers a handler for a message type.
 func (r *Router) Handle(msgType string, fn HandlerFunc) {
+	r.mu.Lock()
 	r.handlers[msgType] = fn
+	r.mu.Unlock()
 }
 
 // Dispatch routes a message to the appropriate handler.
 // Implements the connHandler signature expected by Server.
 func (r *Router) Dispatch(conn net.Conn, msg *Message) *Message {
+	r.mu.RLock()
 	fn, ok := r.handlers[msg.Type]
+	r.mu.RUnlock()
 	if !ok {
 		log.Printf("[Router] Unknown message type: %s", msg.Type)
 		errPayload, _ := json.Marshal(ErrorPayload{Error: "unknown type: " + msg.Type})

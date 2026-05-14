@@ -3,6 +3,7 @@ package ipc
 import (
 	"encoding/json"
 	"net"
+	"sync"
 	"testing"
 )
 
@@ -171,4 +172,23 @@ func TestMustUnmarshal_ValidPayload(t *testing.T) {
 	if v.ConnectionID != "abc" {
 		t.Errorf("got %q, want %q", v.ConnectionID, "abc")
 	}
+}
+
+func TestRouter_ConcurrentDispatch(t *testing.T) {
+	registry := NewConnRegistry()
+	router := NewRouter(registry)
+	router.Handle(MsgCreatePC, func(conn net.Conn, msg *Message) *Message {
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload, _ := json.Marshal(CreatePCPayload{ConnectionID: "test"})
+			router.Dispatch(nil, &Message{Type: MsgCreatePC, Payload: payload})
+		}()
+	}
+	wg.Wait()
 }

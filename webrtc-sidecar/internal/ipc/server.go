@@ -33,6 +33,7 @@ type Server struct {
 	connCount   int64
 	done        chan struct{}
 	wg          sync.WaitGroup
+	closeOnce   sync.Once
 }
 
 // NewServer creates a new IPC server with the given message handler.
@@ -89,12 +90,15 @@ func (s *Server) ServeWithRouter(address string, router *Router) error {
 }
 
 // Close shuts down the server and waits for all connections to finish.
+// Safe to call multiple times.
 func (s *Server) Close() {
-	close(s.done)
-	if s.listener != nil {
-		s.listener.Close()
-	}
-	s.wg.Wait()
+	s.closeOnce.Do(func() {
+		close(s.done)
+		if s.listener != nil {
+			s.listener.Close()
+		}
+		s.wg.Wait()
+	})
 }
 
 // ConnCount returns the current number of active connections.
@@ -152,7 +156,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		var msg Message
 		if err := json.Unmarshal(buf, &msg); err != nil {
 			log.Printf("[IPC] JSON unmarshal error: %v", err)
-			return
+			errPayload, _ := json.Marshal(map[string]string{"error": "invalid json"})
+			_ = WriteMessage(conn, &Message{Type: "error", Payload: errPayload})
+			continue // keep connection alive
 		}
 
 		// Dispatch to handler
