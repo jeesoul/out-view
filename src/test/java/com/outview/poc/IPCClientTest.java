@@ -1,8 +1,12 @@
 package com.outview.poc;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.newsclub.net.unix.AFUNIXServerSocket;
+import org.newsclub.net.unix.AFUNIXSocket;
+import org.newsclub.net.unix.AFUNIXSocketAddress;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
@@ -145,5 +149,54 @@ class IPCClientTest {
 
         String result = IPCClient.readMessage(pis);
         assertEquals(largeMsg, result);
+    }
+
+    /**
+     * Exercises the junixsocket code path directly (skipped on Windows).
+     * Spins up an AFUNIXServerSocket, connects via IPCClient.connectUnix(),
+     * and verifies the length-prefixed protocol works over a real Unix socket.
+     */
+    @Test
+    void testUnixSocketPingPong() throws Exception {
+        Assumptions.assumeTrue(
+                !System.getProperty("os.name", "").toLowerCase().contains("win"),
+                "Unix socket test skipped on Windows");
+
+        File socketFile = File.createTempFile("outview-ipc-test-", ".sock");
+        socketFile.deleteOnExit();
+        socketFile.delete(); // must not exist before bind
+
+        AFUNIXSocketAddress address = AFUNIXSocketAddress.of(socketFile);
+
+        try (AFUNIXServerSocket server = AFUNIXServerSocket.newInstance()) {
+            server.bind(address);
+
+            // Accept one connection in a background thread and echo pong
+            Thread acceptThread = new Thread(() -> {
+                try (AFUNIXSocket conn = server.accept()) {
+                    IPCClient.readMessage(conn.getInputStream()); // consume ping
+                    String pong = "{\"type\":\"pong\",\"payload\":{\"timestamp\":0,"
+                            + "\"echo_message\":\"unix-test\",\"server_time\":0}}";
+                    IPCClient.writeMessage(conn.getOutputStream(), pong);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+            acceptThread.setDaemon(true);
+            acceptThread.start();
+
+            // Connect using the real junixsocket code path in IPCClient
+            try (Socket client = IPCClient.connectUnix(socketFile.getAbsolutePath())) {
+                String ping = "{\"type\":\"ping\",\"payload\":{\"timestamp\":1,\"message\":\"unix-test\"}}";
+                IPCClient.writeMessage(client.getOutputStream(), ping);
+                String response = IPCClient.readMessage(client.getInputStream());
+                assertTrue(response.contains("\"pong\""),
+                        "Expected pong over Unix socket, got: " + response);
+            }
+
+            acceptThread.join(5000);
+        } finally {
+            socketFile.delete();
+        }
     }
 }

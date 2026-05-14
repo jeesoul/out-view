@@ -1,11 +1,13 @@
 package com.outview.poc;
 
+import org.newsclub.net.unix.AFUNIXSocket;
+import org.newsclub.net.unix.AFUNIXSocketAddress;
+
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -242,33 +244,14 @@ public class IPCClient {
     }
 
     /**
-     * Connects via Unix Domain Socket using junixsocket.
-     * Falls back to TCP if junixsocket is not available.
+     * Connects via Unix Domain Socket using junixsocket (direct import, not reflection).
+     * Use {@link AFUNIXSocket#connectTo(AFUNIXSocketAddress)} as the single-call factory.
      */
-    private static Socket connectUnix(String socketPath) throws IOException {
-        try {
-            // Use junixsocket via reflection to avoid compile-time dependency issues
-            Class<?> afUnixSocketAddressClass =
-                    Class.forName("org.newsclub.net.unix.AFUNIXSocketAddress");
-            Class<?> afUnixSocketClass =
-                    Class.forName("org.newsclub.net.unix.AFUNIXSocket");
-
-            Object address = afUnixSocketAddressClass
-                    .getMethod("of", java.io.File.class)
-                    .invoke(null, new java.io.File(socketPath));
-
-            Socket socket = (Socket) afUnixSocketClass
-                    .getMethod("newInstance")
-                    .invoke(null);
-
-            afUnixSocketClass.getMethod("connect", java.net.SocketAddress.class)
-                    .invoke(socket, address);
-
-            return socket;
-        } catch (Exception e) {
-            log.warning("junixsocket not available (" + e.getMessage() + "), falling back to TCP");
-            return connectTCP(DEFAULT_TCP_HOST, DEFAULT_TCP_PORT);
-        }
+    static Socket connectUnix(String socketPath) throws IOException {
+        AFUNIXSocketAddress address = AFUNIXSocketAddress.of(new File(socketPath));
+        AFUNIXSocket socket = AFUNIXSocket.connectTo(address);
+        socket.setSoTimeout(10000);
+        return socket;
     }
 
     // -------------------------------------------------------------------------
