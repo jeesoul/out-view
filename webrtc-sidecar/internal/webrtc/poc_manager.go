@@ -18,8 +18,8 @@ type POCManager struct {
 	answererDC *webrtc.DataChannel
 
 	// Synchronization
-	iceCandidatesMux sync.Mutex
-	offererCandidates []webrtc.ICECandidateInit
+	iceCandidatesMux   sync.Mutex
+	offererCandidates  []webrtc.ICECandidateInit
 	answererCandidates []webrtc.ICECandidateInit
 
 	// State tracking

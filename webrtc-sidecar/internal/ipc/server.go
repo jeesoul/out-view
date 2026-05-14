@@ -27,11 +27,11 @@ type Handler func(msg *Message) *Message
 
 // Server is the IPC server that listens for connections.
 type Server struct {
-	listener    net.Listener
-	handler     Handler
-	connCount   int64
-	done        chan struct{}
-	wg          sync.WaitGroup
+	listener  net.Listener
+	handler   Handler
+	connCount int64
+	done      chan struct{}
+	wg        sync.WaitGroup
 }
 
 // NewServer creates a new IPC server with the given message handler.
@@ -196,9 +196,9 @@ type PingPayload struct {
 
 // PongPayload is the payload for pong responses.
 type PongPayload struct {
-	Timestamp    int64  `json:"timestamp"`
-	EchoMessage  string `json:"echo_message"`
-	ServerTime   int64  `json:"server_time"`
+	Timestamp   int64  `json:"timestamp"`
+	EchoMessage string `json:"echo_message"`
+	ServerTime  int64  `json:"server_time"`
 }
 
 // DefaultHandler is a simple ping-pong handler for POC validation.

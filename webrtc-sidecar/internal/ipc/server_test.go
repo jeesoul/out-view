@@ -70,7 +70,7 @@ func TestConcurrent100(t *testing.T) {
 	defer srv.Close()
 
 	var (
-		wg      sync.WaitGroup
+		wg       sync.WaitGroup
 		errCount int64
 		okCount  int64
 	)
