@@ -30,7 +30,6 @@ type Server struct {
 	listener    net.Listener
 	handler     Handler
 	connCount   int64
-	mu          sync.Mutex
 	done        chan struct{}
 	wg          sync.WaitGroup
 }
