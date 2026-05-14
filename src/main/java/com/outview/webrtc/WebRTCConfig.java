@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "outview.webrtc")
 public class WebRTCConfig {
     private boolean enabled = true;
+    private String sidecarBinaryPath = "/opt/outview/webrtc-sidecar";
     private String sidecarSocketPath = "/tmp/outview-webrtc.sock";
     private int connectTimeoutMs = 5000;
     private int readTimeoutMs = 30000;
@@ -14,6 +15,9 @@ public class WebRTCConfig {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public String getSidecarBinaryPath() { return sidecarBinaryPath; }
+    public void setSidecarBinaryPath(String path) { this.sidecarBinaryPath = path; }
 
     public String getSidecarSocketPath() { return sidecarSocketPath; }
     public void setSidecarSocketPath(String path) { this.sidecarSocketPath = path; }
