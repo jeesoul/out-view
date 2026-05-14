@@ -42,6 +42,20 @@ func NewServer(handler Handler) *Server {
 	}
 }
 
+// ListenIPC starts the server using the platform-specific IPC mechanism.
+// On Unix/Linux/macOS, uses Unix Domain Socket.
+// On Windows, uses Named Pipe (address should be "\\.\pipe\<name>").
+func (s *Server) ListenIPC(address string) error {
+	ln, err := listenIPC(address)
+	if err != nil {
+		return fmt.Errorf("ipc: listen %s: %w", address, err)
+	}
+	s.listener = ln
+	log.Printf("[IPC] Listening on %s", address)
+	go s.acceptLoop()
+	return nil
+}
+
 // ListenTCP starts the server on a TCP address (e.g. "127.0.0.1:9999").
 // Used as fallback on Windows where Unix sockets may not be available.
 func (s *Server) ListenTCP(addr string) error {
