@@ -129,8 +129,14 @@ Expected: 无崩溃，内存稳定，CPU < 50%
 
 **Goal:** 验证 Linux x86_64 + Windows x86_64 平台兼容性
 
+**Files:**
+- Create: webrtc-sidecar/internal/ipc/server_unix.go   (build tag: !windows)
+- Create: webrtc-sidecar/internal/ipc/server_windows.go (build tag: windows, Named Pipe)
+
+- [ ] 创建 server_unix.go（Unix Domain Socket 实现，build tag: !windows）
+- [ ] 创建 server_windows.go（Named Pipe 实现，build tag: windows）
 - [ ] Linux 平台编译测试
-- [ ] Windows 平台编译测试（Named Pipe）
+- [ ] Windows 平台编译测试
 - [ ] 验证 IPC 通信在两平台正常工作
 - [ ] 提交 POC 报告
 
@@ -155,7 +161,8 @@ Windows: GOOS=windows GOARCH=amd64 go build -o sidecar-windows.exe ./cmd/sidecar
 - [ ] 实现 CreateOffer/SetRemoteDescription/AddICECandidate 方法
 - [ ] 实现 SendData 方法（带背压检查）
 - [ ] 实现 Close 方法（资源清理）
-- [ ] 编写单元测试
+- [ ] 在 config.go 中添加 DTLSTimeout 字段（默认 10s），通过 webrtc.SettingEngine 设置 DTLS 握手超时
+- [ ] 编写单元测试（含 TestManager_DTLSTimeout）
 - [ ] 提交代码
 
 **Test:** cd client && go test ./internal/webrtc/... -v
@@ -165,7 +172,9 @@ Windows: GOOS=windows GOARCH=amd64 go build -o sidecar-windows.exe ./cmd/sidecar
 ### Task 6: Sidecar IPC 服务器开发
 
 **Files:**
-- Create: webrtc-sidecar/internal/ipc/server.go
+- Create: webrtc-sidecar/internal/ipc/server.go       (接口定义 + 公共逻辑)
+- Create: webrtc-sidecar/internal/ipc/server_unix.go   (Unix Socket 实现)
+- Create: webrtc-sidecar/internal/ipc/server_windows.go (Named Pipe 实现)
 - Create: webrtc-sidecar/internal/ipc/protocol.go
 - Create: webrtc-sidecar/internal/ipc/types.go
 
@@ -216,6 +225,23 @@ Windows: GOOS=windows GOARCH=amd64 go build -o sidecar-windows.exe ./cmd/sidecar
 
 ---
 
+### Task 8b: SidecarManager 开发
+
+**Files:**
+- Create: src/main/java/com/outview/webrtc/SidecarManager.java
+
+- [ ] 实现 Sidecar 进程启动（ProcessBuilder，配置 binary-path 和 ipc-socket）
+- [ ] 实现进程健康检查（定时 ping IPC，超时判定为不健康）
+- [ ] 实现自动重启（最多 3 次，指数退避）
+- [ ] 实现进程停止（@PreDestroy 优雅关闭）
+- [ ] 实现进程日志转发（stdout/stderr 重定向到 SLF4J）
+- [ ] 编写单元测试（含 TestSidecarManager_StartFailure）
+- [ ] 提交代码
+
+**Test:** cd out-view && mvn test -Dtest=SidecarManagerTest
+
+---
+
 ### Task 9: 协议扩展
 
 **Files:**
@@ -252,7 +278,10 @@ New Message Types:
 - [ ] 编写集成测试
 - [ ] 提交代码
 
-**Test:** 启动服务器 + 客户端，验证信令交换成功
+**Test:**
+Create: test/integration/signaling_test.go
+Run: cd test/integration && go test -v -run TestSignalingFlow
+Expected: Offer/Answer 交换成功，ICE 候选交换成功，DataChannel 建立
 
 ---
 
@@ -266,7 +295,8 @@ New Message Types:
 - Modify: webrtc-sidecar/internal/webrtc/manager.go
 
 - [ ] 实现 OnICECandidate 回调（立即发送候选）
-- [ ] 实现 ICE 候选缓存（处理乱序）
+- [ ] 实现 ICE 候选缓冲队列（SetRemoteDescription 前到达的候选先缓存，设置后批量 AddICECandidate）
+- [ ] 编写 TestManager_AddICECandidate_BeforeRemoteDescription 测试（验证缓冲逻辑）
 - [ ] 实现 ICE 收集完成通知
 - [ ] 实现 ICE 连接状态监控
 - [ ] 编写单元测试
@@ -444,7 +474,6 @@ States: StateIdle, StateGatheringICE, StateConnecting, StateWebRTCConnected,
 
 - [ ] TestManager_CreateOffer_PCClosed
 - [ ] TestManager_SetRemoteDescription_InvalidSDP
-- [ ] TestManager_AddICECandidate_BeforeOffer
 - [ ] TestManager_SendData_BufferFull
 - [ ] TestManager_SendData_ChannelClosed
 - [ ] TestManager_StateTransition_Invalid
@@ -541,14 +570,20 @@ States: StateIdle, StateGatheringICE, StateConnecting, StateWebRTCConnected,
 
 ### Task 29: 性能优化
 
-- [ ] 内存优化（减少分配，使用对象池）
-- [ ] CPU 优化（减少锁竞争，使用 channel）
-- [ ] 延迟优化（减少拷贝，零拷贝技术）
-- [ ] 吞吐量优化（批量发送，调整缓冲区）
-- [ ] 性能测试和基准测试
+**Files:**
+- Modify: client/internal/webrtc/manager.go  (对象池减少分配)
+- Modify: client/internal/webrtc/backpressure.go (批量发送优化)
+- Create: client/internal/webrtc/pool.go  (sync.Pool 对象池)
+- Create: client/internal/webrtc/bench_test.go (基准测试)
+
+- [ ] 实现 sync.Pool 对象池（减少 []byte 分配）
+- [ ] 优化锁粒度（减少 RWMutex 竞争，热路径改用 atomic）
+- [ ] 实现批量发送（积累小包合并发送）
+- [ ] 编写基准测试（BenchmarkSendData, BenchmarkStateTransition）
+- [ ] 验证优化效果（目标：SendData 分配次数 < 1 alloc/op）
 - [ ] 提交代码
 
-**Benchmark:** cd client && go test ./internal/webrtc/... -bench=. -benchmem
+**Benchmark:** cd client && go test ./internal/webrtc/... -bench=. -benchmem -count=3
 
 ---
 
