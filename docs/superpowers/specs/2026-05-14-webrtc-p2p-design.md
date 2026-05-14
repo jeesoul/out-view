@@ -259,14 +259,16 @@ public static final byte TYPE_P2P_FAILED = 12;
 ### 信令流程
 
 1. 用户连接数据端口 → 服务端分配 connectionId
-2. 服务端通过控制通道发送 WEBRTC_OFFER 给客户端
-3. 客户端创建 PeerConnection，生成 SDP Answer
-4. 客户端发送 WEBRTC_ANSWER 给服务端
-5. 双方交换 ICE_CANDIDATE（可能多个）
-6. ICE 协商成功 → DataChannel 打开
-7. 客户端发送 P2P_ESTABLISHED 通知
-8. 服务端将用户的 TCP 连接桥接到 DataChannel
-9. RDP 数据通过 P2P 传输
+2. 服务端通知客户端启动 P2P 协商
+3. 客户端创建 PeerConnection，生成 SDP Offer
+4. 客户端发送 WEBRTC_OFFER 给服务端
+5. 服务端创建 PeerConnection，设置 remote offer，生成 SDP Answer
+6. 服务端发送 WEBRTC_ANSWER 给客户端
+7. 双方交换 ICE_CANDIDATE（可能多个）
+8. ICE 协商成功 → DataChannel 打开
+9. 客户端发送 P2P_ESTABLISHED 通知
+10. 服务端将用户的 TCP 连接桥接到 DataChannel
+11. RDP 数据通过 P2P 传输
 
 如果 15 秒内未建立：
 - 服务端发送 P2P_FAILED
