@@ -37,7 +37,8 @@ public class WebRTCProxyService {
     public synchronized void connect() throws IOException {
         if (connected) return;
         connection = new IPCConnection();
-        connection.connect(config.getSidecarSocketPath(), config.getConnectTimeoutMs());
+        connection.connect(config.getSidecarSocketPath(), config.getConnectTimeoutMs(),
+                           config.getReadTimeoutMs(), config.getMaxMessageSize());
         connection.addListener(new Consumer<IPCMessage>() {
             @Override
             public void accept(IPCMessage msg) {
@@ -119,7 +120,7 @@ public class WebRTCProxyService {
         return connected && connection != null && !connection.isClosed();
     }
 
-    private void send(String type, ObjectNode payload) throws IOException {
+    private synchronized void send(String type, ObjectNode payload) throws IOException {
         if (!connected || connection == null) {
             throw new IOException("Not connected to sidecar");
         }

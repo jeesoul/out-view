@@ -44,10 +44,14 @@ class WebRTCProxyServiceTest {
         };
 
         service.addConnectionListener("conn-1", listener);
+        // Verify listener is registered (we can't easily call handleIncomingMessage externally,
+        // but verify that removeConnectionListener doesn't throw and state is consistent)
         service.removeConnectionListener("conn-1");
-
-        // After removal, listener should not be called.
-        // No exception expected.
+        // After removal, adding again should work without issues
+        service.addConnectionListener("conn-1", listener);
+        service.removeConnectionListener("conn-1");
+        // Verify service is still usable
+        assertFalse(service.isConnected());
     }
 
     @Test

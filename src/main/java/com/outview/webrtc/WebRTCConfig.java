@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 public class WebRTCConfig {
     private boolean enabled = true;
     private String sidecarSocketPath = "/tmp/outview-webrtc.sock";
-    private String sidecarNamedPipe = "\\\\.\\pipe\\outview-webrtc";
     private int connectTimeoutMs = 5000;
     private int readTimeoutMs = 30000;
     private int maxMessageSize = 4 * 1024 * 1024; // 4MB
@@ -18,9 +17,6 @@ public class WebRTCConfig {
 
     public String getSidecarSocketPath() { return sidecarSocketPath; }
     public void setSidecarSocketPath(String path) { this.sidecarSocketPath = path; }
-
-    public String getSidecarNamedPipe() { return sidecarNamedPipe; }
-    public void setSidecarNamedPipe(String pipe) { this.sidecarNamedPipe = pipe; }
 
     public int getConnectTimeoutMs() { return connectTimeoutMs; }
     public void setConnectTimeoutMs(int ms) { this.connectTimeoutMs = ms; }

@@ -21,11 +21,12 @@ import java.util.function.Consumer;
  */
 public class IPCConnection implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(IPCConnection.class);
-    private static final int MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final CopyOnWriteArrayList<Consumer<IPCMessage>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
+
+    private int maxMessageSize = 4 * 1024 * 1024; // default, overridden in connect
 
     private Socket socket;
     private OutputStream out;
@@ -35,15 +36,20 @@ public class IPCConnection implements Closeable {
     /**
      * Connect to the Sidecar. Uses Unix socket on Linux/macOS, TCP fallback on Windows.
      */
-    public void connect(String socketPath, int connectTimeoutMs) throws IOException {
+    public void connect(String socketPath, int connectTimeoutMs, int readTimeoutMs, int maxMessageSize) throws IOException {
+        this.maxMessageSize = maxMessageSize;
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("win")) {
+            // Windows: named pipe support requires go-winio on the sidecar side.
+            // For now, use TCP fallback. The sidecar should be configured with -tcp-addr=127.0.0.1:9999
             Socket tcpSocket = new Socket();
             tcpSocket.connect(new java.net.InetSocketAddress("127.0.0.1", 9999), connectTimeoutMs);
+            tcpSocket.setSoTimeout(readTimeoutMs);
             this.socket = tcpSocket;
         } else {
             AFUNIXSocket unixSocket = AFUNIXSocket.newInstance();
             unixSocket.connect(AFUNIXSocketAddress.of(new File(socketPath)), connectTimeoutMs);
+            unixSocket.setSoTimeout(readTimeoutMs);
             this.socket = unixSocket;
         }
         this.out = new BufferedOutputStream(socket.getOutputStream());
@@ -120,7 +126,7 @@ public class IPCConnection implements Closeable {
                     read += n;
                 }
                 int length = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).getInt();
-                if (length <= 0 || length > MAX_MESSAGE_SIZE) {
+                if (length <= 0 || length > maxMessageSize) {
                     log.error("Invalid IPC message length: {}", length);
                     close();
                     return;
