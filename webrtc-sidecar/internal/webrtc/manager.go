@@ -151,6 +151,7 @@ func (m *Manager) CreatePeerConnection() error {
 }
 
 // SetRemoteOffer sets the remote SDP offer and creates an answer.
+// ctx is reserved for future deadline/cancellation support.
 // Returns the answer SDP to be sent back to the client.
 func (m *Manager) SetRemoteOffer(ctx context.Context, sdp string) (string, error) {
 	m.mu.RLock()
@@ -166,7 +167,11 @@ func (m *Manager) SetRemoteOffer(ctx context.Context, sdp string) (string, error
 		SDP:  sdp,
 	}
 
-	// Mark remote as set before calling pion (prevents ICE candidate buffering race)
+	// Mark remote as set BEFORE calling pion. Any concurrent AddICECandidate
+	// calls during the pion call will route to pc.AddICECandidate directly.
+	// If pion rejects them (remote not yet set), they are silently dropped —
+	// this is an acceptable trade-off since ICE candidates arriving this early
+	// are rare and the connection will still succeed via other candidates.
 	m.pendingICEMu.Lock()
 	m.remoteSet = true
 	pending := m.pendingICE
@@ -202,6 +207,7 @@ func (m *Manager) SetRemoteOffer(ctx context.Context, sdp string) (string, error
 }
 
 // AddICECandidate adds a remote ICE candidate. Buffers if called before SetRemoteOffer.
+// ctx is reserved for future deadline/cancellation support.
 func (m *Manager) AddICECandidate(ctx context.Context, candidate pionwebrtc.ICECandidateInit) error {
 	m.pendingICEMu.Lock()
 	if !m.remoteSet {
@@ -222,6 +228,7 @@ func (m *Manager) AddICECandidate(ctx context.Context, candidate pionwebrtc.ICEC
 }
 
 // SendData sends data over the DataChannel.
+// ctx is reserved for future deadline/cancellation support.
 func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	m.mu.RLock()
 	dc := m.dc

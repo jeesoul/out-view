@@ -133,3 +133,37 @@ func TestPool_Count(t *testing.T) {
 		t.Errorf("expected count=3, got %d", pool.Count())
 	}
 }
+
+func TestManager_SendData_NotReady(t *testing.T) {
+	registry := ipc.NewConnRegistry()
+	m := NewManager("test-send-notready", registry, nil)
+	defer m.Close()
+
+	err := m.SendData(nil, []byte("hello"))
+	if err == nil {
+		t.Error("expected error when DataChannel not ready")
+	}
+}
+
+func TestPool_Remove_NonExistent(t *testing.T) {
+	registry := ipc.NewConnRegistry()
+	pool := NewPool(registry, nil)
+	pool.Remove("does-not-exist") // should not panic
+}
+
+func TestPool_CloseAll_CountZero(t *testing.T) {
+	registry := ipc.NewConnRegistry()
+	pool := NewPool(registry, nil)
+
+	if _, err := pool.Create("c1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Create("c2"); err != nil {
+		t.Fatal(err)
+	}
+	pool.CloseAll()
+
+	if pool.Count() != 0 {
+		t.Errorf("expected count=0 after CloseAll, got %d", pool.Count())
+	}
+}
