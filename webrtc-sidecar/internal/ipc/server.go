@@ -27,11 +27,12 @@ type Handler func(msg *Message) *Message
 
 // Server is the IPC server that listens for connections.
 type Server struct {
-	listener  net.Listener
-	handler   Handler
-	connCount int64
-	done      chan struct{}
-	wg        sync.WaitGroup
+	listener    net.Listener
+	handler     Handler
+	connHandler func(net.Conn, *Message) *Message // optional; takes precedence over handler
+	connCount   int64
+	done        chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewServer creates a new IPC server with the given message handler.
@@ -79,6 +80,12 @@ func (s *Server) ListenUnix(socketPath string) error {
 	log.Printf("[IPC] Listening on Unix socket %s", socketPath)
 	go s.acceptLoop()
 	return nil
+}
+
+// ServeWithRouter starts the server using a Router that receives the net.Conn.
+func (s *Server) ServeWithRouter(address string, router *Router) error {
+	s.connHandler = router.Dispatch
+	return s.ListenIPC(address)
 }
 
 // Close shuts down the server and waits for all connections to finish.
@@ -149,7 +156,12 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 
 		// Dispatch to handler
-		resp := s.handler(&msg)
+		var resp *Message
+		if s.connHandler != nil {
+			resp = s.connHandler(conn, &msg)
+		} else {
+			resp = s.handler(&msg)
+		}
 		if resp == nil {
 			continue
 		}
