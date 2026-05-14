@@ -18,11 +18,17 @@ func TestManager_NewManager(t *testing.T) {
 
 func TestManager_DTLSTimeout(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.DTLSTimeout = 10 * time.Second
-	m := NewManager("test-conn-dtls", cfg, nil)
+	cfg.DTLSTimeout = 5 * time.Second // non-default value
+	m := NewManager("test-dtls", cfg, nil)
 	defer m.Close()
-	if cfg.DTLSTimeout != 10*time.Second {
-		t.Errorf("expected DTLSTimeout=10s, got %v", cfg.DTLSTimeout)
+	// Verify the manager stores the config with the custom timeout
+	if m.config.DTLSTimeout != 5*time.Second {
+		t.Errorf("expected DTLSTimeout=5s, got %v", m.config.DTLSTimeout)
+	}
+	// Verify default is 10s
+	defaultCfg := DefaultConfig()
+	if defaultCfg.DTLSTimeout != 10*time.Second {
+		t.Errorf("expected default DTLSTimeout=10s, got %v", defaultCfg.DTLSTimeout)
 	}
 }
 

@@ -42,6 +42,8 @@ type Manager struct {
 	// ICE candidate sender (set by caller)
 	onICECandidate func(pionwebrtc.ICECandidateInit)
 	onICEComplete  func()
+
+	closeOnce sync.Once
 }
 
 type stateTransition struct {
@@ -90,6 +92,11 @@ func (m *Manager) SetOnICEComplete(fn func()) { m.onICEComplete = fn }
 func (m *Manager) CreateOffer(ctx context.Context) (pionwebrtc.SessionDescription, error) {
 	se := pionwebrtc.SettingEngine{}
 	se.SetDTLSInsecureSkipHelloVerify(false)
+	// Wire DTLSTimeout into the DTLS handshake context
+	dtlsTimeout := m.config.DTLSTimeout
+	se.SetDTLSConnectContextMaker(func() (context.Context, func()) {
+		return context.WithTimeout(context.Background(), dtlsTimeout)
+	})
 	// Set DTLS replay protection window
 	se.SetDTLSReplayProtectionWindow(64)
 
@@ -221,29 +228,28 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 
 // Close shuts down the Manager and releases all resources.
 func (m *Manager) Close() error {
-	if ConnectionState(m.state.Load()) == StateClosed {
-		return nil
-	}
+	m.closeOnce.Do(func() {
+		m.requestStateTransition(StateClosing, "explicit close")
+		m.cancel()
 
-	m.requestStateTransition(StateClosing, "explicit close")
-	m.cancel()
+		m.mu.Lock()
+		dc := m.dc
+		pc := m.pc
+		m.dc = nil
+		m.pc = nil
+		m.mu.Unlock()
 
-	m.mu.Lock()
-	dc := m.dc
-	pc := m.pc
-	m.dc = nil
-	m.pc = nil
-	m.mu.Unlock()
+		if dc != nil {
+			dc.Close()
+		}
+		if pc != nil {
+			pc.Close()
+		}
 
-	if dc != nil {
-		dc.Close()
-	}
-	if pc != nil {
-		pc.Close()
-	}
-
-	m.requestStateTransition(StateClosed, "closed")
-	m.logger.Info("Manager closed")
+		// Directly store StateClosed since ctx is cancelled and stateActor may have exited
+		m.state.Store(int32(StateClosed))
+		m.logger.Info("Manager closed")
+	})
 	return nil
 }
 
