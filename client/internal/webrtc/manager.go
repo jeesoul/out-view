@@ -156,19 +156,26 @@ func (m *Manager) SetRemoteDescription(ctx context.Context, sd pionwebrtc.Sessio
 		return errors.New("peer connection not initialized")
 	}
 
+	// Mark remote as set BEFORE calling pion, so concurrent AddICECandidate
+	// calls during the pion call go directly to pc.AddICECandidate.
+	m.pendingICEMu.Lock()
+	m.remoteSet = true
+	pending := m.pendingICE
+	m.pendingICE = nil
+	m.pendingICEMu.Unlock()
+
 	if err := pc.SetRemoteDescription(sd); err != nil {
+		// Roll back remoteSet on failure so future candidates still buffer.
+		m.pendingICEMu.Lock()
+		m.remoteSet = false
+		m.pendingICE = append(pending, m.pendingICE...)
+		m.pendingICEMu.Unlock()
 		return fmt.Errorf("set remote description: %w", err)
 	}
 
 	m.requestStateTransition(StateConnecting, "remote description set")
 
-	// Flush buffered ICE candidates
-	m.pendingICEMu.Lock()
-	pending := m.pendingICE
-	m.pendingICE = nil
-	m.remoteSet = true
-	m.pendingICEMu.Unlock()
-
+	// Flush candidates that were buffered before this call.
 	for _, c := range pending {
 		if err := pc.AddICECandidate(c); err != nil {
 			m.logger.Warn("Failed to add buffered ICE candidate", "err", err)
@@ -209,16 +216,21 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 		return errors.New("data channel not ready")
 	}
 
-	for {
-		if dc.BufferedAmount() < BufferHighWaterMark {
-			break
-		}
+	if dc.BufferedAmount() < BufferHighWaterMark {
+		return dc.Send(data)
+	}
+
+	// Buffer is full — wait with a single timer to avoid per-iteration allocations.
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	for dc.BufferedAmount() >= BufferHighWaterMark {
 		m.logger.Debug("Buffer full, waiting", "buffered", dc.BufferedAmount())
 		select {
 		case <-m.sendResumeCh:
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(5 * time.Second):
+		case <-timer.C:
 			return errors.New("send timeout: buffer full")
 		}
 	}
