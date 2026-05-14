@@ -1,0 +1,356 @@
+package webrtc
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	pionwebrtc "github.com/pion/webrtc/v4"
+)
+
+// Manager manages a single WebRTC PeerConnection for the Go client.
+type Manager struct {
+	mu sync.RWMutex
+	pc *pionwebrtc.PeerConnection
+	dc *pionwebrtc.DataChannel
+
+	state atomic.Int32 // ConnectionState
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	onDataReceived func([]byte)
+	onStateChange  func(ConnectionState)
+	onFallback     func(reason string) // called when WebRTC fails, trigger TCP fallback
+
+	config       *Config
+	connectionID string
+	logger       *slog.Logger
+
+	stateCh      chan stateTransition
+	sendResumeCh chan struct{}
+
+	// ICE candidates buffered before SetRemoteDescription
+	pendingICEMu sync.Mutex
+	pendingICE   []pionwebrtc.ICECandidateInit
+	remoteSet    bool // true after SetRemoteDescription called
+
+	// ICE candidate sender (set by caller)
+	onICECandidate func(pionwebrtc.ICECandidateInit)
+	onICEComplete  func()
+}
+
+type stateTransition struct {
+	to     ConnectionState
+	reason string
+}
+
+// NewManager creates a new WebRTC Manager.
+func NewManager(connectionID string, cfg *Config, logger *slog.Logger) *Manager {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &Manager{
+		config:       cfg,
+		connectionID: connectionID,
+		logger:       logger.With("connectionId", connectionID),
+		ctx:          ctx,
+		cancel:       cancel,
+		stateCh:      make(chan stateTransition, 16),
+		sendResumeCh: make(chan struct{}, 1),
+	}
+	go m.stateActor()
+	return m
+}
+
+// SetOnDataReceived sets the callback for incoming DataChannel messages.
+func (m *Manager) SetOnDataReceived(fn func([]byte)) { m.onDataReceived = fn }
+
+// SetOnStateChange sets the callback for state transitions.
+func (m *Manager) SetOnStateChange(fn func(ConnectionState)) { m.onStateChange = fn }
+
+// SetOnFallback sets the callback triggered when WebRTC fails and TCP fallback should start.
+func (m *Manager) SetOnFallback(fn func(reason string)) { m.onFallback = fn }
+
+// SetOnICECandidate sets the callback to send ICE candidates to the remote peer.
+func (m *Manager) SetOnICECandidate(fn func(pionwebrtc.ICECandidateInit)) { m.onICECandidate = fn }
+
+// SetOnICEComplete sets the callback for when ICE gathering is complete.
+func (m *Manager) SetOnICEComplete(fn func()) { m.onICEComplete = fn }
+
+// CreateOffer creates a PeerConnection + DataChannel and returns an SDP offer.
+func (m *Manager) CreateOffer(ctx context.Context) (pionwebrtc.SessionDescription, error) {
+	se := pionwebrtc.SettingEngine{}
+	se.SetDTLSInsecureSkipHelloVerify(false)
+	// Set DTLS replay protection window
+	se.SetDTLSReplayProtectionWindow(64)
+
+	api := pionwebrtc.NewAPI(pionwebrtc.WithSettingEngine(se))
+
+	icePolicy := pionwebrtc.ICETransportPolicyAll
+	if m.config.ICETransportPolicy == "relay" {
+		icePolicy = pionwebrtc.ICETransportPolicyRelay
+	}
+
+	pc, err := api.NewPeerConnection(pionwebrtc.Configuration{
+		ICEServers:         m.config.ICEServers,
+		ICETransportPolicy: icePolicy,
+	})
+	if err != nil {
+		return pionwebrtc.SessionDescription{}, fmt.Errorf("create peer connection: %w", err)
+	}
+
+	// Create DataChannel before offer (so it's included in SDP)
+	dc, err := pc.CreateDataChannel("rdp-data", &pionwebrtc.DataChannelInit{
+		Ordered: boolPtr(true),
+	})
+	if err != nil {
+		pc.Close()
+		return pionwebrtc.SessionDescription{}, fmt.Errorf("create data channel: %w", err)
+	}
+
+	m.setupDataChannel(dc)
+	m.setupICEHandlers(pc)
+	m.setupConnectionHandlers(pc)
+
+	m.mu.Lock()
+	m.pc = pc
+	m.dc = dc
+	m.mu.Unlock()
+
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		return pionwebrtc.SessionDescription{}, fmt.Errorf("create offer: %w", err)
+	}
+
+	if err := pc.SetLocalDescription(offer); err != nil {
+		return pionwebrtc.SessionDescription{}, fmt.Errorf("set local description: %w", err)
+	}
+
+	m.requestStateTransition(StateGatheringICE, "offer created")
+	return offer, nil
+}
+
+// SetRemoteDescription sets the remote SDP answer and flushes buffered ICE candidates.
+func (m *Manager) SetRemoteDescription(ctx context.Context, sd pionwebrtc.SessionDescription) error {
+	m.mu.RLock()
+	pc := m.pc
+	m.mu.RUnlock()
+
+	if pc == nil {
+		return errors.New("peer connection not initialized")
+	}
+
+	if err := pc.SetRemoteDescription(sd); err != nil {
+		return fmt.Errorf("set remote description: %w", err)
+	}
+
+	m.requestStateTransition(StateConnecting, "remote description set")
+
+	// Flush buffered ICE candidates
+	m.pendingICEMu.Lock()
+	pending := m.pendingICE
+	m.pendingICE = nil
+	m.remoteSet = true
+	m.pendingICEMu.Unlock()
+
+	for _, c := range pending {
+		if err := pc.AddICECandidate(c); err != nil {
+			m.logger.Warn("Failed to add buffered ICE candidate", "err", err)
+		}
+	}
+
+	return nil
+}
+
+// AddICECandidate adds a remote ICE candidate. Buffers if called before SetRemoteDescription.
+func (m *Manager) AddICECandidate(ctx context.Context, c pionwebrtc.ICECandidateInit) error {
+	m.pendingICEMu.Lock()
+	if !m.remoteSet {
+		m.pendingICE = append(m.pendingICE, c)
+		m.pendingICEMu.Unlock()
+		return nil
+	}
+	m.pendingICEMu.Unlock()
+
+	m.mu.RLock()
+	pc := m.pc
+	m.mu.RUnlock()
+
+	if pc == nil {
+		return errors.New("peer connection not initialized")
+	}
+
+	return pc.AddICECandidate(c)
+}
+
+// SendData sends data over the DataChannel with backpressure.
+func (m *Manager) SendData(ctx context.Context, data []byte) error {
+	m.mu.RLock()
+	dc := m.dc
+	m.mu.RUnlock()
+
+	if dc == nil {
+		return errors.New("data channel not ready")
+	}
+
+	for {
+		if dc.BufferedAmount() < BufferHighWaterMark {
+			break
+		}
+		m.logger.Debug("Buffer full, waiting", "buffered", dc.BufferedAmount())
+		select {
+		case <-m.sendResumeCh:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errors.New("send timeout: buffer full")
+		}
+	}
+
+	return dc.Send(data)
+}
+
+// Close shuts down the Manager and releases all resources.
+func (m *Manager) Close() error {
+	if ConnectionState(m.state.Load()) == StateClosed {
+		return nil
+	}
+
+	m.requestStateTransition(StateClosing, "explicit close")
+	m.cancel()
+
+	m.mu.Lock()
+	dc := m.dc
+	pc := m.pc
+	m.dc = nil
+	m.pc = nil
+	m.mu.Unlock()
+
+	if dc != nil {
+		dc.Close()
+	}
+	if pc != nil {
+		pc.Close()
+	}
+
+	m.requestStateTransition(StateClosed, "closed")
+	m.logger.Info("Manager closed")
+	return nil
+}
+
+// State returns the current connection state.
+func (m *Manager) State() ConnectionState {
+	return ConnectionState(m.state.Load())
+}
+
+func (m *Manager) setupDataChannel(dc *pionwebrtc.DataChannel) {
+	dc.SetBufferedAmountLowThreshold(BufferLowWaterMark)
+
+	dc.OnBufferedAmountLow(func() {
+		select {
+		case m.sendResumeCh <- struct{}{}:
+		default:
+		}
+	})
+
+	dc.OnOpen(func() {
+		m.logger.Info("DataChannel opened")
+		m.requestStateTransition(StateWebRTCConnected, "data channel open")
+	})
+
+	dc.OnClose(func() {
+		m.logger.Info("DataChannel closed")
+		m.triggerFallback("data channel closed")
+	})
+
+	dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+		if m.onDataReceived != nil {
+			m.onDataReceived(msg.Data)
+		}
+	})
+}
+
+func (m *Manager) setupICEHandlers(pc *pionwebrtc.PeerConnection) {
+	pc.OnICECandidate(func(c *pionwebrtc.ICECandidate) {
+		if c == nil {
+			m.logger.Info("ICE gathering complete")
+			if m.onICEComplete != nil {
+				m.onICEComplete()
+			}
+			return
+		}
+		m.logger.Debug("ICE candidate", "type", c.Typ, "address", c.Address)
+		if m.onICECandidate != nil {
+			m.onICECandidate(c.ToJSON())
+		}
+	})
+
+	pc.OnICEConnectionStateChange(func(state pionwebrtc.ICEConnectionState) {
+		m.logger.Info("ICE connection state", "state", state)
+		switch state {
+		case pionwebrtc.ICEConnectionStateFailed:
+			m.triggerFallback("ICE connection failed")
+		case pionwebrtc.ICEConnectionStateDisconnected:
+			m.requestStateTransition(StateWebRTCReconnecting, "ICE disconnected")
+		}
+	})
+}
+
+func (m *Manager) setupConnectionHandlers(pc *pionwebrtc.PeerConnection) {
+	pc.OnConnectionStateChange(func(state pionwebrtc.PeerConnectionState) {
+		m.logger.Info("PeerConnection state", "state", state)
+		switch state {
+		case pionwebrtc.PeerConnectionStateFailed:
+			m.triggerFallback("peer connection failed")
+		case pionwebrtc.PeerConnectionStateClosed:
+			m.requestStateTransition(StateClosing, "peer connection closed")
+		}
+	})
+}
+
+func (m *Manager) triggerFallback(reason string) {
+	m.requestStateTransition(StateWebRTCFailed, reason)
+	if m.onFallback != nil {
+		m.onFallback(reason)
+	}
+}
+
+func (m *Manager) requestStateTransition(to ConnectionState, reason string) {
+	select {
+	case m.stateCh <- stateTransition{to: to, reason: reason}:
+	case <-m.ctx.Done():
+	}
+}
+
+func (m *Manager) stateActor() {
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case trans := <-m.stateCh:
+			current := ConnectionState(m.state.Load())
+			if !isValidTransition(current, trans.to) {
+				m.logger.Debug("Ignoring invalid state transition",
+					"from", current, "to", trans.to, "reason", trans.reason)
+				continue
+			}
+			m.state.Store(int32(trans.to))
+			m.logger.Info("State transition",
+				"from", current, "to", trans.to, "reason", trans.reason)
+			if m.onStateChange != nil {
+				m.onStateChange(trans.to)
+			}
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
