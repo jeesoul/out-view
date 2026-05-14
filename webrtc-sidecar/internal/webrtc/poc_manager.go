@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
-// POCManager demonstrates pion/webrtc v3 functionality
+// POCManager demonstrates pion/webrtc v4 functionality
 // This is a simplified POC that creates two PeerConnections in the same process
 type POCManager struct {
 	offerer  *webrtc.PeerConnection

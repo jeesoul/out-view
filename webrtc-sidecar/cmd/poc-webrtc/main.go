@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== pion/webrtc v3 POC ===")
+	fmt.Println("=== pion/webrtc v4 POC ===")
 	fmt.Println()
 
 	// Create POC manager
@@ -83,7 +83,7 @@ func main() {
 
 	// Step 9: Send test data
 	fmt.Println("\nStep 9: Sending test data...")
-	testData := []byte("Hello from pion/webrtc v3!")
+	testData := []byte("Hello from pion/webrtc v4!")
 	if err := manager.SendData(testData); err != nil {
 		fmt.Printf("Failed to send data: %v\n", err)
 		os.Exit(1)
