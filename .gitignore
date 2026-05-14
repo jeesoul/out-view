@@ -66,3 +66,4 @@ DEPLOYMENT.md
 
 # Release packages (never commit)
 release/
+.worktrees/
