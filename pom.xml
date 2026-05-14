@@ -79,6 +79,14 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- junixsocket: Unix Domain Socket support for Java (POC IPC) -->
+        <dependency>
+            <groupId>com.kohlschutter.junixsocket</groupId>
+            <artifactId>junixsocket-core</artifactId>
+            <version>2.9.0</version>
+            <type>pom</type>
+        </dependency>
     </dependencies>
 
     <build>
@@ -103,6 +111,15 @@
                     <source>1.8</source>
                     <target>1.8</target>
                     <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+            <!-- exec-maven-plugin: run Java POC client via mvn exec:java -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <mainClass>com.outview.poc.IPCClient</mainClass>
                 </configuration>
             </plugin>
         </plugins>
