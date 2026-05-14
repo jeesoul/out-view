@@ -105,7 +105,8 @@ func main() {
 	fmt.Printf("Creating %d connection pairs...\n", *connections)
 	startTime := time.Now()
 
-	pairs := make([]*ConnectionPair, 0, *connections)
+	// Pre-allocate slice to avoid race condition
+	pairs := make([]*ConnectionPair, *connections)
 	var wg sync.WaitGroup
 
 	for i := 0; i < *connections; i++ {
@@ -120,6 +121,7 @@ func main() {
 			if err != nil {
 				fmt.Printf("[Pair %d] Failed to create: %v\n", id, err)
 				atomic.AddInt32(&metrics.failedConnections, 1)
+				atomic.AddInt32(&metrics.totalConnections, 1)
 				return
 			}
 
@@ -127,7 +129,8 @@ func main() {
 			atomic.AddInt32(&metrics.activeConnections, 1)
 			atomic.AddInt32(&metrics.totalConnections, 1)
 
-			pairs = append(pairs, pair)
+			// Safe: each goroutine writes to unique index
+			pairs[id] = pair
 			fmt.Printf("[Pair %d] Established in %dms\n", id, connDuration)
 		}(i)
 	}
