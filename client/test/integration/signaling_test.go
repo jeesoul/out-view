@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -214,8 +215,10 @@ func TestSignalingFlow(t *testing.T) {
 
 	// Build client config pointing at the mock server
 	host, portStr, _ := net.SplitHostPort(srv.Addr())
-	var port int
-	_, _ = parsePort(portStr, &port)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("invalid port %q: %v", portStr, err)
+	}
 
 	cfg := client.DefaultConfig()
 	cfg.ServerHost = host
@@ -264,15 +267,8 @@ func TestSignalingFlow(t *testing.T) {
 	}
 }
 
-// parsePort is a small helper to avoid importing strconv in the test.
-func parsePort(s string, out *int) (int, error) {
-	n := 0
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return 0, nil
-		}
-		n = n*10 + int(ch-'0')
-	}
-	*out = n
-	return n, nil
-}
+// Note: Minor 7 (asserting answer was processed via manager state) is skipped because
+// the mock server sends a syntactically invalid SDP (no media sections), which causes
+// pion to reject SetRemoteDescription. Asserting StateConnecting would require a real
+// SDP or a more invasive test refactor. The signaling flow itself (offer sent, answer
+// received, ICE exchange) is verified by the channel checks above.

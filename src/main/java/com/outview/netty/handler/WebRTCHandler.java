@@ -11,6 +11,8 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * WebRTC signaling handler.
  *
@@ -64,7 +66,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
     // -------------------------------------------------------------------------
 
     private void handleOffer(ChannelHandlerContext ctx, ProtocolMessage msg) {
-        String body = new String(msg.getBody());
+        String body = new String(msg.getBody(), StandardCharsets.UTF_8);
         try {
             JsonNode json = MAPPER.readTree(body);
             String connectionId = json.path("connectionId").asText(null);
@@ -94,6 +96,8 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                         ctx.writeAndFlush(ProtocolMessage.webrtcAnswer(connectionId, answerSdp));
                         // Keep the listener alive for subsequent ICE / established events
                     } else if ("ice_candidate".equals(event)) {
+                        // Field names match sidecar EventPayload JSON tags: sdp_mid (snake_case).
+                        // sdp_mline_index is not emitted by the sidecar; null is handled gracefully.
                         String candidate = payload.path("candidate").asText(null);
                         String sdpMid = payload.path("sdp_mid").asText(null);
                         Integer sdpMLineIndex = payload.has("sdp_mline_index")
@@ -121,8 +125,14 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
             });
 
             // Tell the sidecar to create a PeerConnection and set the remote SDP (offer).
-            webRTCProxyService.createPC(connectionId);
-            webRTCProxyService.setRemoteSDP(connectionId, sdp, sdpType);
+            // If either call throws, remove the listener to avoid a permanent leak.
+            try {
+                webRTCProxyService.createPC(connectionId);
+                webRTCProxyService.setRemoteSDP(connectionId, sdp, sdpType);
+            } catch (Exception e) {
+                webRTCProxyService.removeConnectionListener(connectionId);
+                log.error("[WebRTCHandler] Failed to set up WebRTC for {}: {}", connectionId, e.getMessage());
+            }
 
         } catch (Exception e) {
             log.error("[WebRTCHandler] Failed to handle offer", e);
@@ -134,7 +144,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
     // -------------------------------------------------------------------------
 
     private void handleICECandidate(ProtocolMessage msg) {
-        String body = new String(msg.getBody());
+        String body = new String(msg.getBody(), StandardCharsets.UTF_8);
         try {
             JsonNode json = MAPPER.readTree(body);
             String connectionId = json.path("connectionId").asText(null);
@@ -178,7 +188,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
     // -------------------------------------------------------------------------
 
     private void handleFailed(ProtocolMessage msg) {
-        String body = new String(msg.getBody());
+        String body = new String(msg.getBody(), StandardCharsets.UTF_8);
         try {
             JsonNode json = MAPPER.readTree(body);
             String connectionId = json.path("connectionId").asText(null);

@@ -74,19 +74,39 @@ func NewManager(connectionID string, cfg *Config, logger *slog.Logger) *Manager 
 }
 
 // SetOnDataReceived sets the callback for incoming DataChannel messages.
-func (m *Manager) SetOnDataReceived(fn func([]byte)) { m.onDataReceived = fn }
+func (m *Manager) SetOnDataReceived(fn func([]byte)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onDataReceived = fn
+}
 
 // SetOnStateChange sets the callback for state transitions.
-func (m *Manager) SetOnStateChange(fn func(ConnectionState)) { m.onStateChange = fn }
+func (m *Manager) SetOnStateChange(fn func(ConnectionState)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onStateChange = fn
+}
 
 // SetOnFallback sets the callback triggered when WebRTC fails and TCP fallback should start.
-func (m *Manager) SetOnFallback(fn func(reason string)) { m.onFallback = fn }
+func (m *Manager) SetOnFallback(fn func(reason string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onFallback = fn
+}
 
 // SetOnICECandidate sets the callback to send ICE candidates to the remote peer.
-func (m *Manager) SetOnICECandidate(fn func(pionwebrtc.ICECandidateInit)) { m.onICECandidate = fn }
+func (m *Manager) SetOnICECandidate(fn func(pionwebrtc.ICECandidateInit)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onICECandidate = fn
+}
 
 // SetOnICEComplete sets the callback for when ICE gathering is complete.
-func (m *Manager) SetOnICEComplete(fn func()) { m.onICEComplete = fn }
+func (m *Manager) SetOnICEComplete(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onICEComplete = fn
+}
 
 // CreateOffer creates a PeerConnection + DataChannel and returns an SDP offer.
 func (m *Manager) CreateOffer(ctx context.Context) (pionwebrtc.SessionDescription, error) {
@@ -296,8 +316,11 @@ func (m *Manager) setupDataChannel(dc *pionwebrtc.DataChannel) {
 	})
 
 	dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
-		if m.onDataReceived != nil {
-			m.onDataReceived(msg.Data)
+		m.mu.RLock()
+		fn := m.onDataReceived
+		m.mu.RUnlock()
+		if fn != nil {
+			fn(msg.Data)
 		}
 	})
 }
@@ -306,14 +329,20 @@ func (m *Manager) setupICEHandlers(pc *pionwebrtc.PeerConnection) {
 	pc.OnICECandidate(func(c *pionwebrtc.ICECandidate) {
 		if c == nil {
 			m.logger.Info("ICE gathering complete")
-			if m.onICEComplete != nil {
-				m.onICEComplete()
+			m.mu.RLock()
+			fn := m.onICEComplete
+			m.mu.RUnlock()
+			if fn != nil {
+				fn()
 			}
 			return
 		}
 		m.logger.Debug("ICE candidate", "type", c.Typ, "address", c.Address)
-		if m.onICECandidate != nil {
-			m.onICECandidate(c.ToJSON())
+		m.mu.RLock()
+		fn := m.onICECandidate
+		m.mu.RUnlock()
+		if fn != nil {
+			fn(c.ToJSON())
 		}
 	})
 
@@ -342,8 +371,11 @@ func (m *Manager) setupConnectionHandlers(pc *pionwebrtc.PeerConnection) {
 
 func (m *Manager) triggerFallback(reason string) {
 	m.requestStateTransition(StateWebRTCFailed, reason)
-	if m.onFallback != nil {
-		m.onFallback(reason)
+	m.mu.RLock()
+	fn := m.onFallback
+	m.mu.RUnlock()
+	if fn != nil {
+		fn(reason)
 	}
 }
 
@@ -369,8 +401,11 @@ func (m *Manager) stateActor() {
 			m.state.Store(int32(trans.to))
 			m.logger.Info("State transition",
 				"from", current, "to", trans.to, "reason", trans.reason)
-			if m.onStateChange != nil {
-				m.onStateChange(trans.to)
+			m.mu.RLock()
+			fn := m.onStateChange
+			m.mu.RUnlock()
+			if fn != nil {
+				fn(trans.to)
 			}
 		}
 	}

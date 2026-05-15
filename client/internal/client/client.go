@@ -699,6 +699,9 @@ func (c *Client) initiateWebRTCOffer() {
 	offer, err := mgr.CreateOffer(ctx)
 	if err != nil {
 		logger.Error("Failed to create WebRTC offer: %v", err)
+		// Close the manager so it transitions to a failed state and triggers
+		// the fallback callback (if set), allowing the client to continue via TCP relay.
+		mgr.Close()
 		return
 	}
 
