@@ -47,6 +47,9 @@ type Manager struct {
 
 	// connectedAt is set when the state transitions to StateWebRTCConnected.
 	connectedAt atomic.Pointer[time.Time]
+
+	// fallbackCount tracks the total number of times fallback was triggered.
+	fallbackCount atomic.Int64
 }
 
 type stateTransition struct {
@@ -331,6 +334,8 @@ type ManagerStats struct {
 	// Uptime is the duration since the connection reached StateWebRTCConnected.
 	// Zero if the connection has never been established.
 	Uptime time.Duration
+	// FallbackCount is the total number of times fallback was triggered.
+	FallbackCount int64
 }
 
 // Stats returns a snapshot of the Manager's current state and uptime.
@@ -343,9 +348,10 @@ func (m *Manager) Stats() ManagerStats {
 		}
 	}
 	return ManagerStats{
-		ConnectionID: m.connectionID,
-		State:        state,
-		Uptime:       uptime,
+		ConnectionID:  m.connectionID,
+		State:         state,
+		Uptime:        uptime,
+		FallbackCount: m.fallbackCount.Load(),
 	}
 }
 
@@ -424,6 +430,7 @@ func (m *Manager) setupConnectionHandlers(pc *pionwebrtc.PeerConnection) {
 }
 
 func (m *Manager) triggerFallback(reason string) {
+	m.fallbackCount.Add(1)
 	m.requestStateTransition(StateWebRTCFailed, reason)
 	m.mu.RLock()
 	fn := m.onFallback
@@ -431,6 +438,11 @@ func (m *Manager) triggerFallback(reason string) {
 	if fn != nil {
 		fn(reason)
 	}
+}
+
+// FallbackCount returns the total number of times fallback was triggered.
+func (m *Manager) FallbackCount() int64 {
+	return m.fallbackCount.Load()
 }
 
 func (m *Manager) requestStateTransition(to ConnectionState, reason string) {

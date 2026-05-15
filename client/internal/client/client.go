@@ -73,6 +73,16 @@ type Client struct {
 
 	// WebRTC manager (nil when WebRTC is disabled)
 	webrtcManager *clientwebrtc.Manager
+	// webrtcCfg holds the WebRTC configuration (timeout, ICE servers, etc.)
+	webrtcCfg *clientwebrtc.Config
+
+	// usingWebRTC is true when data is actively being routed through WebRTC.
+	// Protected by webrtcMu.
+	usingWebRTC bool
+	// webrtcEnabled is true when WebRTC was successfully initiated at least once.
+	// Used to decide whether to re-initiate WebRTC after a TCP reconnect.
+	webrtcEnabled bool
+	webrtcMu      sync.Mutex
 
 	// Callbacks
 	OnStateChange    func(old, new State)
@@ -99,6 +109,10 @@ func NewClient(config *Config) *Client {
 // connectionID is the identifier used for the WebRTC PeerConnection.
 func NewClientWithWebRTC(config *Config, connectionID string, webrtcCfg *clientwebrtc.Config) *Client {
 	c := NewClient(config)
+	if webrtcCfg == nil {
+		webrtcCfg = clientwebrtc.DefaultConfig()
+	}
+	c.webrtcCfg = webrtcCfg
 	c.webrtcManager = clientwebrtc.NewManager(connectionID, webrtcCfg, nil)
 	return c
 }
@@ -407,6 +421,20 @@ func (c *Client) reconnectLoop() {
 			// restart readLoop for the new connection
 			c.wg.Add(1)
 			go c.readLoop()
+
+			// If WebRTC was previously enabled, re-initiate the offer on the new connection.
+			c.webrtcMu.Lock()
+			shouldReinitiateWebRTC := c.webrtcEnabled && c.webrtcCfg != nil
+			c.webrtcMu.Unlock()
+
+			if shouldReinitiateWebRTC {
+				logger.Info("Re-initiating WebRTC offer after TCP reconnect")
+				// Create a fresh Manager for the new connection attempt.
+				connID := c.webrtcManager.ConnectionID()
+				c.webrtcManager = clientwebrtc.NewManager(connID, c.webrtcCfg, nil)
+				go c.initiateWebRTCOffer()
+			}
+
 			break
 		}
 	}
@@ -679,10 +707,16 @@ func (c *Client) initiateWebRTCOffer() {
 		}
 	})
 
-	// Wire fallback callback.
+	// Wire fallback callback: stop routing via WebRTC and notify the server.
 	mgr.SetOnFallback(func(reason string) {
 		connID := mgr.ConnectionID()
 		logger.Warn("WebRTC failed, falling back to TCP relay: connectionId=%s, reason=%s", connID, reason)
+
+		// Mark that we are no longer using WebRTC for data routing.
+		c.webrtcMu.Lock()
+		c.usingWebRTC = false
+		c.webrtcMu.Unlock()
+
 		failedMsg, err := protocol.NewWebRTCFailedMessage(connID, reason)
 		if err != nil {
 			logger.Error("Failed to create WebRTC failed message: %v", err)
@@ -692,6 +726,12 @@ func (c *Client) initiateWebRTCOffer() {
 			logger.Error("Failed to send WebRTC failed: %v", err)
 		}
 	})
+
+	// Determine the WebRTC establishment timeout.
+	webrtcTimeout := 8 * time.Second
+	if c.webrtcCfg != nil && c.webrtcCfg.WebRTCTimeout > 0 {
+		webrtcTimeout = c.webrtcCfg.WebRTCTimeout
+	}
 
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -708,6 +748,11 @@ func (c *Client) initiateWebRTCOffer() {
 	connID := mgr.ConnectionID()
 	logger.Info("Sending WebRTC offer to server: connectionId=%s", connID)
 
+	// Mark WebRTC as enabled now that we have sent an offer.
+	c.webrtcMu.Lock()
+	c.webrtcEnabled = true
+	c.webrtcMu.Unlock()
+
 	offerMsg, err := protocol.NewWebRTCOfferMessage(connID, offer.SDP)
 	if err != nil {
 		logger.Error("Failed to create offer message: %v", err)
@@ -715,7 +760,25 @@ func (c *Client) initiateWebRTCOffer() {
 	}
 	if err := c.sendRaw(offerMsg); err != nil {
 		logger.Error("Failed to send WebRTC offer: %v", err)
+		return
 	}
+
+	// Start a timeout watchdog: if WebRTC is not connected within webrtcTimeout,
+	// trigger fallback to TCP relay.
+	go func() {
+		timer := time.NewTimer(webrtcTimeout)
+		defer timer.Stop()
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-timer.C:
+			if !mgr.IsConnected() {
+				logger.Warn("WebRTC connection timed out after %v, triggering fallback: connectionId=%s",
+					webrtcTimeout, connID)
+				mgr.Close()
+			}
+		}
+	}()
 }
 
 // handleWebRTCAnswer processes a TypeWebRTCAnswer message from the server.
@@ -797,6 +860,11 @@ func (c *Client) handleWebRTCEstablished(msg *protocol.Message) {
 		return
 	}
 	logger.Info("WebRTC connection established: connectionId=%s", body.ConnectionID)
+
+	// Switch data routing to WebRTC path.
+	c.webrtcMu.Lock()
+	c.usingWebRTC = true
+	c.webrtcMu.Unlock()
 }
 
 // handleWebRTCFailed processes a TypeWebRTCFailed message from the server.
@@ -809,6 +877,11 @@ func (c *Client) handleWebRTCFailed(msg *protocol.Message) {
 	}
 	logger.Warn("WebRTC failed (server notification): connectionId=%s, reason=%s",
 		body.ConnectionID, body.Reason)
+
+	// Ensure data routing falls back to TCP.
+	c.webrtcMu.Lock()
+	c.usingWebRTC = false
+	c.webrtcMu.Unlock()
 
 	// Close the local WebRTC manager so it transitions to failed/closed state.
 	if c.webrtcManager != nil {
