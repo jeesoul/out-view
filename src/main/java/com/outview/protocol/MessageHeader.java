@@ -92,6 +92,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC Offer 消息头
+     */
     public static MessageHeader webrtcOffer(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)
@@ -102,6 +105,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC Answer 消息头
+     */
     public static MessageHeader webrtcAnswer(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)
@@ -112,6 +118,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC ICE Candidate 消息头
+     */
     public static MessageHeader webrtcICECandidate(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)
@@ -122,6 +131,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC ICE Complete 消息头
+     */
     public static MessageHeader webrtcICEComplete(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)
@@ -132,6 +144,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC Established 消息头
+     */
     public static MessageHeader webrtcEstablished(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)
@@ -142,6 +157,9 @@ public class MessageHeader {
                 .build();
     }
 
+    /**
+     * 创建 WebRTC Failed 消息头
+     */
     public static MessageHeader webrtcFailed(int bodyLength) {
         return MessageHeader.builder()
                 .magic(ProtocolConstants.MAGIC_NUMBER)

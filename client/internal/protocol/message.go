@@ -9,10 +9,10 @@ import (
 
 // MessageHeader represents the protocol message header (12 bytes)
 type MessageHeader struct {
-	Magic    int   // 4 bytes
+	Magic    int32 // 4 bytes
 	Version  byte  // 1 byte
 	Type     byte  // 1 byte
-	Length   int   // 4 bytes
+	Length   int32 // 4 bytes
 	Reserved int16 // 2 bytes
 }
 
@@ -64,7 +64,7 @@ func NewRegisterMessage(deviceID, token string, localPort int) (*Message, error)
 			Magic:   MagicNumber,
 			Version: Version,
 			Type:    TypeRegister,
-			Length:  len(body),
+			Length:  int32(len(body)),
 		},
 		Body: body,
 	}, nil
@@ -83,7 +83,7 @@ func NewHeartbeatMessage() (*Message, error) {
 			Magic:   MagicNumber,
 			Version: Version,
 			Type:    TypeHeartbeat,
-			Length:  len(body),
+			Length:  int32(len(body)),
 		},
 		Body: body,
 	}, nil
@@ -96,7 +96,7 @@ func NewDataMessage(data []byte) *Message {
 			Magic:   MagicNumber,
 			Version: Version,
 			Type:    TypeData,
-			Length:  len(data),
+			Length:  int32(len(data)),
 		},
 		Body: data,
 	}
@@ -143,7 +143,7 @@ func NewDataMessageWithConnectionID(connectionID string, data []byte) *Message {
 			Magic:   MagicNumber,
 			Version: Version,
 			Type:    TypeData,
-			Length:  len(body),
+			Length:  int32(len(body)),
 		},
 		Body: body,
 	}
@@ -194,7 +194,15 @@ func NewWebRTCOfferMessage(connectionID, sdp string) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc offer: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCOffer, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCOffer,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // NewWebRTCAnswerMessage creates a TypeWebRTCAnswer message.
@@ -203,7 +211,15 @@ func NewWebRTCAnswerMessage(connectionID, sdp string) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc answer: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCAnswer, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCAnswer,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // NewWebRTCICECandidateMessage creates a TypeWebRTCICECandidate message.
@@ -217,7 +233,15 @@ func NewWebRTCICECandidateMessage(connectionID, candidate, sdpMid string, sdpMLi
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc ice candidate: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCICECandidate, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCICECandidate,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // NewWebRTCICECompleteMessage creates a TypeWebRTCICEComplete message.
@@ -226,7 +250,15 @@ func NewWebRTCICECompleteMessage(connectionID string) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc ice complete: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCICEComplete, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCICEComplete,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // NewWebRTCEstablishedMessage creates a TypeWebRTCEstablished message.
@@ -235,7 +267,15 @@ func NewWebRTCEstablishedMessage(connectionID string) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc established: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCEstablished, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCEstablished,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // NewWebRTCFailedMessage creates a TypeWebRTCFailed message.
@@ -244,7 +284,15 @@ func NewWebRTCFailedMessage(connectionID, reason string) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal webrtc failed: %w", err)
 	}
-	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCFailed, Length: len(body)}, Body: body}, nil
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeWebRTCFailed,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
 }
 
 // ParseWebRTCOfferBody parses the body of a TypeWebRTCOffer or TypeWebRTCAnswer message.
@@ -287,7 +335,7 @@ func NewCloseConnectionMessage(connectionID string) *Message {
 			Magic:   MagicNumber,
 			Version: Version,
 			Type:    TypeCloseConnection,
-			Length:  len(body),
+			Length:  int32(len(body)),
 		},
 		Body: body,
 	}

@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class WebRTCProtocolTest {
@@ -74,7 +77,7 @@ class WebRTCProtocolTest {
             ProtocolConstants.TYPE_WEBRTC_ESTABLISHED,
             ProtocolConstants.TYPE_WEBRTC_FAILED,
         };
-        java.util.Set<Byte> seen = new java.util.HashSet<>();
+        Set<Byte> seen = new HashSet<>();
         for (byte t : types) {
             assertTrue(seen.add(t), "Duplicate type value: " + t);
         }

@@ -36,6 +36,12 @@ func TestNewWebRTCAnswerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if body.ConnectionID != "conn-2" {
+		t.Errorf("expected connectionId=conn-2, got %s", body.ConnectionID)
+	}
+	if body.SDP != "v=0\r\n..." {
+		t.Errorf("expected sdp=v=0\\r\\n..., got %s", body.SDP)
+	}
 	if body.SDPType != "answer" {
 		t.Errorf("expected sdpType=answer, got %s", body.SDPType)
 	}

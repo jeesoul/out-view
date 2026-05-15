@@ -26,10 +26,10 @@ func (d *Decoder) Decode() (*Message, error) {
 
 	// Parse header
 	header := &MessageHeader{
-		Magic:    int(binary.BigEndian.Uint32(headerBuf[0:4])),
+		Magic:    int32(binary.BigEndian.Uint32(headerBuf[0:4])),
 		Version:  headerBuf[4],
 		Type:     headerBuf[5],
-		Length:   int(binary.BigEndian.Uint32(headerBuf[6:10])),
+		Length:   int32(binary.BigEndian.Uint32(headerBuf[6:10])),
 		Reserved: int16(binary.BigEndian.Uint16(headerBuf[10:12])),
 	}
 
@@ -67,10 +67,10 @@ func DecodeFromBytes(data []byte) (*Message, int, error) {
 
 	// Parse header
 	header := &MessageHeader{
-		Magic:    int(binary.BigEndian.Uint32(data[0:4])),
+		Magic:    int32(binary.BigEndian.Uint32(data[0:4])),
 		Version:  data[4],
 		Type:     data[5],
-		Length:   int(binary.BigEndian.Uint32(data[6:10])),
+		Length:   int32(binary.BigEndian.Uint32(data[6:10])),
 		Reserved: int16(binary.BigEndian.Uint16(data[10:12])),
 	}
 
@@ -84,7 +84,7 @@ func DecodeFromBytes(data []byte) (*Message, int, error) {
 		return nil, 0, fmt.Errorf("invalid body length: %d", header.Length)
 	}
 
-	totalLen := HeaderLength + header.Length
+	totalLen := HeaderLength + int(header.Length)
 	if len(data) < totalLen {
 		return nil, 0, fmt.Errorf("insufficient data for body: need %d, have %d", totalLen, len(data))
 	}

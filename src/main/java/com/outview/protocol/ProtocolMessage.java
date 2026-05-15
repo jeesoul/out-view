@@ -24,12 +24,17 @@ public class ProtocolMessage {
     private byte[] body;
 
     public static ProtocolMessage heartbeat() {
-        String jsonBody = "{\"timestamp\":" + System.currentTimeMillis() + "}";
-        byte[] body = jsonBody.getBytes(StandardCharsets.UTF_8);
-        return ProtocolMessage.builder()
-                .header(MessageHeader.heartbeat(body.length))
-                .body(body)
-                .build();
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("timestamp", System.currentTimeMillis());
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.heartbeat(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create heartbeat message", e);
+        }
     }
 
     public static ProtocolMessage data(byte[] payload) {
@@ -101,24 +106,33 @@ public class ProtocolMessage {
     }
 
     public static ProtocolMessage register(String deviceId, String token, int localPort) {
-        String jsonBody = String.format(
-                "{\"deviceId\":\"%s\",\"token\":\"%s\",\"localPort\":%d}",
-                deviceId, token, localPort
-        );
-        byte[] body = jsonBody.getBytes(StandardCharsets.UTF_8);
-        return ProtocolMessage.builder()
-                .header(MessageHeader.register(body.length))
-                .body(body)
-                .build();
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("deviceId", deviceId);
+            node.put("token", token);
+            node.put("localPort", localPort);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.register(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create register message", e);
+        }
     }
 
     public static ProtocolMessage error(String message) {
-        String jsonBody = String.format("{\"message\":\"%s\"}", message);
-        byte[] body = jsonBody.getBytes(StandardCharsets.UTF_8);
-        return ProtocolMessage.builder()
-                .header(MessageHeader.error(body.length))
-                .body(body)
-                .build();
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("message", message);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.error(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create error message", e);
+        }
     }
 
     public static ProtocolMessage webrtcOffer(String connectionId, String sdp) {
