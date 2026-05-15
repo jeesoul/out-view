@@ -270,6 +270,11 @@ func (m *Manager) State() ConnectionState {
 	return ConnectionState(m.state.Load())
 }
 
+// ConnectionID returns the connection identifier for this Manager.
+func (m *Manager) ConnectionID() string {
+	return m.connectionID
+}
+
 func (m *Manager) setupDataChannel(dc *pionwebrtc.DataChannel) {
 	dc.SetBufferedAmountLowThreshold(BufferLowWaterMark)
 

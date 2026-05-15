@@ -11,6 +11,8 @@ import (
 
 	"github.com/outview/client/internal/logger"
 	"github.com/outview/client/internal/protocol"
+	clientwebrtc "github.com/outview/client/internal/webrtc"
+	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
 // State represents the client state
@@ -69,6 +71,9 @@ type Client struct {
 	// reconnect signal: readLoop sends here when connection drops
 	reconnectCh chan struct{}
 
+	// WebRTC manager (nil when WebRTC is disabled)
+	webrtcManager *clientwebrtc.Manager
+
 	// Callbacks
 	OnStateChange    func(old, new State)
 	OnRegisterResult func(success bool, externalPort int, err error)
@@ -79,7 +84,7 @@ type Client struct {
 // NewClient creates a new client
 func NewClient(config *Config) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{
+	c := &Client{
 		config:           config,
 		proxyManager:     NewProxyManager(),
 		localConnections: make(map[string]*connectionConn),
@@ -87,6 +92,15 @@ func NewClient(config *Config) *Client {
 		cancel:           cancel,
 		reconnectCh:      make(chan struct{}, 1),
 	}
+	return c
+}
+
+// NewClientWithWebRTC creates a new client with WebRTC enabled.
+// connectionID is the identifier used for the WebRTC PeerConnection.
+func NewClientWithWebRTC(config *Config, connectionID string, webrtcCfg *clientwebrtc.Config) *Client {
+	c := NewClient(config)
+	c.webrtcManager = clientwebrtc.NewManager(connectionID, webrtcCfg, nil)
+	return c
 }
 
 // connect establishes a TCP connection to the server (no registration).
@@ -234,6 +248,11 @@ func (c *Client) Stop() {
 	c.connMu.Unlock()
 
 	c.proxyManager.CloseAll()
+
+	if c.webrtcManager != nil {
+		c.webrtcManager.Close()
+	}
+
 	c.wg.Wait()
 	c.setState(StateDisconnected)
 }
@@ -403,6 +422,16 @@ func (c *Client) handleMessage(msg *protocol.Message) {
 		c.handleData(msg)
 	case protocol.TypeError:
 		c.handleError(msg)
+	case protocol.TypeWebRTCAnswer:
+		c.handleWebRTCAnswer(msg)
+	case protocol.TypeWebRTCICECandidate:
+		c.handleWebRTCICECandidate(msg)
+	case protocol.TypeWebRTCICEComplete:
+		c.handleWebRTCICEComplete(msg)
+	case protocol.TypeWebRTCEstablished:
+		c.handleWebRTCEstablished(msg)
+	case protocol.TypeWebRTCFailed:
+		c.handleWebRTCFailed(msg)
 	default:
 		if c.OnError != nil {
 			c.OnError(fmt.Errorf("unknown message type: %d", msg.Header.Type))
@@ -432,6 +461,11 @@ func (c *Client) handleRegisterAck(msg *protocol.Message) {
 			regErr = fmt.Errorf("registration failed: %s", resp.Message)
 		}
 		c.OnRegisterResult(resp.Success, resp.ExternalPort, regErr)
+	}
+
+	// If WebRTC is enabled and registration succeeded, initiate the offer.
+	if resp.Success && c.webrtcManager != nil {
+		go c.initiateWebRTCOffer()
 	}
 }
 
@@ -594,6 +628,188 @@ func (c *Client) handleError(msg *protocol.Message) {
 
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("server error: %s", resp.Message))
+	}
+}
+
+// -------------------------------------------------------------------------
+// WebRTC signaling helpers
+// -------------------------------------------------------------------------
+
+// initiateWebRTCOffer creates a PeerConnection, wires ICE callbacks, and sends
+// the SDP offer to the server. Called in a goroutine after successful registration.
+func (c *Client) initiateWebRTCOffer() {
+	mgr := c.webrtcManager
+	if mgr == nil {
+		return
+	}
+
+	// Wire ICE candidate callback: send each candidate to the server.
+	mgr.SetOnICECandidate(func(init pionwebrtc.ICECandidateInit) {
+		candidate := init.Candidate
+		sdpMid := ""
+		if init.SDPMid != nil {
+			sdpMid = *init.SDPMid
+		}
+		var sdpMLineIndex *uint16
+		if init.SDPMLineIndex != nil {
+			sdpMLineIndex = init.SDPMLineIndex
+		}
+		connID := mgr.ConnectionID()
+		iceMsg, err := protocol.NewWebRTCICECandidateMessage(connID, candidate, sdpMid, sdpMLineIndex)
+		if err != nil {
+			logger.Error("Failed to create ICE candidate message: %v", err)
+			return
+		}
+		if err := c.sendRaw(iceMsg); err != nil {
+			logger.Error("Failed to send ICE candidate: %v", err)
+		}
+	})
+
+	// Wire ICE complete callback.
+	mgr.SetOnICEComplete(func() {
+		connID := mgr.ConnectionID()
+		logger.Info("ICE gathering complete, notifying server: connectionId=%s", connID)
+		completeMsg, err := protocol.NewWebRTCICECompleteMessage(connID)
+		if err != nil {
+			logger.Error("Failed to create ICE complete message: %v", err)
+			return
+		}
+		if err := c.sendRaw(completeMsg); err != nil {
+			logger.Error("Failed to send ICE complete: %v", err)
+		}
+	})
+
+	// Wire fallback callback.
+	mgr.SetOnFallback(func(reason string) {
+		connID := mgr.ConnectionID()
+		logger.Warn("WebRTC failed, falling back to TCP relay: connectionId=%s, reason=%s", connID, reason)
+		failedMsg, err := protocol.NewWebRTCFailedMessage(connID, reason)
+		if err != nil {
+			logger.Error("Failed to create WebRTC failed message: %v", err)
+			return
+		}
+		if err := c.sendRaw(failedMsg); err != nil {
+			logger.Error("Failed to send WebRTC failed: %v", err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	defer cancel()
+
+	offer, err := mgr.CreateOffer(ctx)
+	if err != nil {
+		logger.Error("Failed to create WebRTC offer: %v", err)
+		return
+	}
+
+	connID := mgr.ConnectionID()
+	logger.Info("Sending WebRTC offer to server: connectionId=%s", connID)
+
+	offerMsg, err := protocol.NewWebRTCOfferMessage(connID, offer.SDP)
+	if err != nil {
+		logger.Error("Failed to create offer message: %v", err)
+		return
+	}
+	if err := c.sendRaw(offerMsg); err != nil {
+		logger.Error("Failed to send WebRTC offer: %v", err)
+	}
+}
+
+// handleWebRTCAnswer processes a TypeWebRTCAnswer message from the server.
+func (c *Client) handleWebRTCAnswer(msg *protocol.Message) {
+	if c.webrtcManager == nil {
+		logger.Warn("Received WebRTC answer but WebRTC is not enabled")
+		return
+	}
+
+	body, err := protocol.ParseWebRTCOfferBody(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse WebRTC answer: %v", err)
+		return
+	}
+
+	logger.Info("Received WebRTC answer: connectionId=%s", body.ConnectionID)
+
+	sd := pionwebrtc.SessionDescription{
+		Type: pionwebrtc.SDPTypeAnswer,
+		SDP:  body.SDP,
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := c.webrtcManager.SetRemoteDescription(ctx, sd); err != nil {
+		logger.Error("Failed to set remote description: %v", err)
+	}
+}
+
+// handleWebRTCICECandidate processes a TypeWebRTCICECandidate message from the server.
+func (c *Client) handleWebRTCICECandidate(msg *protocol.Message) {
+	if c.webrtcManager == nil {
+		return
+	}
+
+	body, err := protocol.ParseWebRTCICECandidateBody(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse ICE candidate: %v", err)
+		return
+	}
+
+	logger.Debug("Received ICE candidate from server: connectionId=%s", body.ConnectionID)
+
+	init := pionwebrtc.ICECandidateInit{
+		Candidate: body.Candidate,
+	}
+	if body.SDPMid != "" {
+		sdpMid := body.SDPMid
+		init.SDPMid = &sdpMid
+	}
+	if body.SDPMLineIndex != nil {
+		init.SDPMLineIndex = body.SDPMLineIndex
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	defer cancel()
+
+	if err := c.webrtcManager.AddICECandidate(ctx, init); err != nil {
+		logger.Error("Failed to add ICE candidate: %v", err)
+	}
+}
+
+// handleWebRTCICEComplete processes a TypeWebRTCICEComplete message from the server.
+func (c *Client) handleWebRTCICEComplete(msg *protocol.Message) {
+	body, err := protocol.ParseWebRTCConnectionBody(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse ICE complete message: %v", err)
+		return
+	}
+	logger.Info("Server ICE gathering complete: connectionId=%s", body.ConnectionID)
+}
+
+// handleWebRTCEstablished processes a TypeWebRTCEstablished message from the server.
+func (c *Client) handleWebRTCEstablished(msg *protocol.Message) {
+	body, err := protocol.ParseWebRTCConnectionBody(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse WebRTC established message: %v", err)
+		return
+	}
+	logger.Info("WebRTC connection established: connectionId=%s", body.ConnectionID)
+}
+
+// handleWebRTCFailed processes a TypeWebRTCFailed message from the server.
+// Logs the failure and triggers fallback to TCP relay.
+func (c *Client) handleWebRTCFailed(msg *protocol.Message) {
+	body, err := protocol.ParseWebRTCConnectionBody(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse WebRTC failed message: %v", err)
+		return
+	}
+	logger.Warn("WebRTC failed (server notification): connectionId=%s, reason=%s",
+		body.ConnectionID, body.Reason)
+
+	// Close the local WebRTC manager so it transitions to failed/closed state.
+	if c.webrtcManager != nil {
+		c.webrtcManager.Close()
 	}
 }
 
