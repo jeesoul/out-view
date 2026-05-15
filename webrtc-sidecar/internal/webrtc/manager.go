@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	pionwebrtc "github.com/pion/webrtc/v4"
 
@@ -34,6 +35,15 @@ type Manager struct {
 	pendingICEMu sync.Mutex
 	pendingICE   []pionwebrtc.ICECandidateInit
 	remoteSet    bool
+
+	// onDataForward is called when data arrives from the DataChannel and needs
+	// to be forwarded to the Java server. If nil, data is forwarded via IPC
+	// registry (the default path).
+	onDataForward func(connectionID string, data []byte)
+
+	// sendResumeCh is signalled when the DataChannel buffer drains below the
+	// low-water mark, allowing blocked SendData calls to resume.
+	sendResumeCh chan struct{}
 }
 
 const (
@@ -42,6 +52,13 @@ const (
 	stateConnected  = 2
 	stateFailed     = 3
 	stateClosed     = 4
+
+	// BufferHighWaterMark is the DataChannel buffer threshold above which SendData
+	// will block waiting for the buffer to drain.
+	BufferHighWaterMark uint64 = 1 * 1024 * 1024 // 1 MB
+
+	// BufferLowWaterMark is the threshold at which the blocked SendData is resumed.
+	BufferLowWaterMark uint64 = 512 * 1024 // 512 KB
 )
 
 // NewManager creates a new server-side WebRTC Manager.
@@ -56,6 +73,7 @@ func NewManager(connectionID string, registry *ipc.ConnRegistry, logger *slog.Lo
 		logger:       logger.With("connectionId", connectionID),
 		ctx:          ctx,
 		cancel:       cancel,
+		sendResumeCh: make(chan struct{}, 1),
 	}
 }
 
@@ -102,6 +120,15 @@ func (m *Manager) CreatePeerConnection() error {
 		m.dc = dc
 		m.mu.Unlock()
 
+		// Configure backpressure thresholds.
+		dc.SetBufferedAmountLowThreshold(BufferLowWaterMark)
+		dc.OnBufferedAmountLow(func() {
+			select {
+			case m.sendResumeCh <- struct{}{}:
+			default:
+			}
+		})
+
 		dc.OnOpen(func() {
 			m.logger.Info("DataChannel opened")
 			m.state.Store(stateConnected)
@@ -122,6 +149,16 @@ func (m *Manager) CreatePeerConnection() error {
 		})
 
 		dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+			m.mu.RLock()
+			fwd := m.onDataForward
+			m.mu.RUnlock()
+
+			if fwd != nil {
+				// Custom forward path (e.g. direct in-process routing).
+				fwd(m.connectionID, msg.Data)
+				return
+			}
+			// Default: forward to Java server via IPC event.
 			_ = m.registry.SendEvent(m.connectionID, &ipc.EventPayload{
 				ConnectionID: m.connectionID,
 				Event:        ipc.EventData,
@@ -227,7 +264,17 @@ func (m *Manager) AddICECandidate(ctx context.Context, candidate pionwebrtc.ICEC
 	return pc.AddICECandidate(candidate)
 }
 
-// SendData sends data over the DataChannel.
+// SetOnDataForward sets a callback that is invoked when data arrives from the
+// DataChannel and needs to be forwarded to the Java server. When set, the
+// default IPC-based forwarding path is bypassed.
+func (m *Manager) SetOnDataForward(fn func(connectionID string, data []byte)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onDataForward = fn
+}
+
+// SendData sends data over the DataChannel with backpressure.
+// It blocks until the buffer drains below BufferHighWaterMark or ctx is cancelled.
 // ctx is reserved for future deadline/cancellation support.
 func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	m.mu.RLock()
@@ -237,6 +284,28 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	if dc == nil {
 		return errors.New("data channel not ready")
 	}
+
+	if dc.BufferedAmount() < BufferHighWaterMark {
+		return dc.Send(data)
+	}
+
+	// Buffer is full — wait for it to drain.
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	for dc.BufferedAmount() >= BufferHighWaterMark {
+		m.logger.Debug("Buffer full, waiting", "buffered", dc.BufferedAmount())
+		select {
+		case <-m.sendResumeCh:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return errors.New("send timeout: buffer full")
+		case <-m.ctx.Done():
+			return errors.New("manager closed")
+		}
+	}
+
 	return dc.Send(data)
 }
 

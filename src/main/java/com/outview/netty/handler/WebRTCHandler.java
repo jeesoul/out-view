@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.outview.protocol.ProtocolConstants;
 import com.outview.protocol.ProtocolMessage;
 import com.outview.webrtc.WebRTCConnectionRegistry;
+import com.outview.webrtc.WebRTCDataRouter;
 import com.outview.webrtc.WebRTCProxyService;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -22,6 +23,9 @@ import java.util.Set;
  * binary protocol. For each Offer it creates a PeerConnection via the sidecar, obtains an
  * Answer, and writes it back to the channel. ICE candidates are forwarded to the sidecar.
  * ICE-complete, Established, and Failed messages are logged (and Failed triggers cleanup).
+ *
+ * <p>Also intercepts TYPE_DATA (type 3) messages for connections that have an active WebRTC
+ * session and routes them via {@link WebRTCDataRouter} instead of the normal TCP relay path.
  */
 @Slf4j
 @Component
@@ -32,10 +36,14 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
 
     private final WebRTCProxyService webRTCProxyService;
     private final WebRTCConnectionRegistry registry;
+    private final WebRTCDataRouter dataRouter;
 
-    public WebRTCHandler(WebRTCProxyService webRTCProxyService, WebRTCConnectionRegistry registry) {
+    public WebRTCHandler(WebRTCProxyService webRTCProxyService,
+                         WebRTCConnectionRegistry registry,
+                         WebRTCDataRouter dataRouter) {
         this.webRTCProxyService = webRTCProxyService;
         this.registry = registry;
+        this.dataRouter = dataRouter;
     }
 
     @Override
@@ -43,6 +51,14 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
         byte type = msg.getHeader().getType();
 
         switch (type) {
+            case ProtocolConstants.TYPE_DATA:
+                // If this connection has an active WebRTC session, route via DataChannel.
+                // Otherwise pass through to the normal TCP relay handler.
+                if (handleDataIfWebRTC(msg)) {
+                    return;
+                }
+                ctx.fireChannelRead(msg);
+                break;
             case ProtocolConstants.TYPE_WEBRTC_OFFER:
                 handleOffer(ctx, msg);
                 break;
@@ -63,6 +79,34 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                 ctx.fireChannelRead(msg);
                 break;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Data routing: intercept TYPE_DATA for active WebRTC connections
+    // -------------------------------------------------------------------------
+
+    /**
+     * If the data packet's connectionId has an active WebRTC session, route it
+     * via the DataChannel and return {@code true}. Otherwise return {@code false}
+     * so the message can be passed to the normal TCP relay handler.
+     */
+    private boolean handleDataIfWebRTC(ProtocolMessage msg) {
+        ProtocolMessage.DataPacket packet = msg.parseDataPacket();
+        if (packet == null) {
+            return false;
+        }
+        String connectionId = packet.getConnectionId();
+        if (connectionId == null || connectionId.isEmpty()) {
+            return false;
+        }
+        // Check whether this connection has an active WebRTC session.
+        if (registry.getContext(connectionId) == null) {
+            return false;
+        }
+        log.debug("[WebRTCHandler] Routing TYPE_DATA via WebRTC DataChannel: connectionId={}, bytes={}",
+                connectionId, packet.getData().length);
+        dataRouter.routeToWebRTC(connectionId, packet.getData());
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -100,8 +144,6 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                         ctx.writeAndFlush(ProtocolMessage.webrtcAnswer(connectionId, answerSdp));
                         // Keep the listener alive for subsequent ICE / established events
                     } else if ("ice_candidate".equals(event)) {
-                        // Field names match sidecar EventPayload JSON tags: sdp_mid (snake_case).
-                        // sdp_mline_index is not emitted by the sidecar; null is handled gracefully.
                         String candidate = payload.path("candidate").asText(null);
                         String sdpMid = payload.path("sdp_mid").asText(null);
                         Integer sdpMLineIndex = payload.has("sdp_mline_index")
@@ -116,7 +158,9 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                     } else if ("established".equals(event)) {
                         log.info("[WebRTCHandler] WebRTC established (sidecar event): connectionId={}", connectionId);
                         ctx.writeAndFlush(ProtocolMessage.webrtcEstablished(connectionId));
-                        webRTCProxyService.removeConnectionListener(connectionId);
+                        // Switch the signaling listener to a data listener now that the
+                        // DataChannel is open. The data router will handle 'data' events.
+                        dataRouter.registerDataListener(connectionId);
                     } else if ("failed".equals(event)) {
                         String reason = payload.path("reason").asText("unknown");
                         log.warn("[WebRTCHandler] WebRTC failed (sidecar event): connectionId={}, reason={}", connectionId, reason);
@@ -204,7 +248,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
             log.warn("[WebRTCHandler] WebRTC failed: connectionId={}, reason={}", connectionId, reason);
 
             if (connectionId != null) {
-                webRTCProxyService.removeConnectionListener(connectionId);
+                dataRouter.unregisterDataListener(connectionId);
                 registry.unregister(connectionId);
                 try {
                     webRTCProxyService.closePC(connectionId);
@@ -238,6 +282,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
         for (String connectionId : allIds) {
             if (ctx.equals(registry.getContext(connectionId))) {
                 log.info("[WebRTCHandler] Channel closed, cleaning up connectionId={}", connectionId);
+                dataRouter.unregisterDataListener(connectionId);
                 registry.unregister(connectionId);
                 try {
                     webRTCProxyService.closePC(connectionId);
@@ -256,3 +301,4 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
         ctx.close();
     }
 }
+

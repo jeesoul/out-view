@@ -83,6 +83,12 @@ func (m *Manager) SetOnDataReceived(fn func([]byte)) {
 	m.onDataReceived = fn
 }
 
+// SetDataHandler is an alias for SetOnDataReceived. It sets the callback
+// invoked when data arrives from the DataChannel (server → client direction).
+func (m *Manager) SetDataHandler(fn func(data []byte)) {
+	m.SetOnDataReceived(fn)
+}
+
 // SetOnStateChange sets the callback for state transitions.
 func (m *Manager) SetOnStateChange(fn func(ConnectionState)) {
 	m.mu.Lock()
