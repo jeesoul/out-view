@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.outview.protocol.ProtocolConstants;
 import com.outview.protocol.ProtocolMessage;
+import com.outview.webrtc.WebRTCConnectionRegistry;
 import com.outview.webrtc.WebRTCProxyService;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -12,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 
 /**
  * WebRTC signaling handler.
@@ -29,9 +31,11 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final WebRTCProxyService webRTCProxyService;
+    private final WebRTCConnectionRegistry registry;
 
-    public WebRTCHandler(WebRTCProxyService webRTCProxyService) {
+    public WebRTCHandler(WebRTCProxyService webRTCProxyService, WebRTCConnectionRegistry registry) {
         this.webRTCProxyService = webRTCProxyService;
+        this.registry = registry;
     }
 
     @Override
@@ -49,7 +53,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                 handleICEComplete(msg);
                 break;
             case ProtocolConstants.TYPE_WEBRTC_ESTABLISHED:
-                handleEstablished(msg);
+                handleEstablished(ctx, msg);
                 break;
             case ProtocolConstants.TYPE_WEBRTC_FAILED:
                 handleFailed(msg);
@@ -178,9 +182,12 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
     // Established — WebRTC data channel is open
     // -------------------------------------------------------------------------
 
-    private void handleEstablished(ProtocolMessage msg) {
+    private void handleEstablished(ChannelHandlerContext ctx, ProtocolMessage msg) {
         String connectionId = parseConnectionId(msg);
         log.info("[WebRTCHandler] WebRTC established: connectionId={}", connectionId);
+        if (connectionId != null) {
+            registry.register(connectionId, ctx);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -198,6 +205,7 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
 
             if (connectionId != null) {
                 webRTCProxyService.removeConnectionListener(connectionId);
+                registry.unregister(connectionId);
                 try {
                     webRTCProxyService.closePC(connectionId);
                 } catch (Exception e) {
@@ -221,6 +229,25 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
             log.warn("[WebRTCHandler] Failed to parse connectionId from message", e);
             return null;
         }
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // When the channel closes, clean up all WebRTC connections that were using it.
+        Set<String> allIds = registry.getAll();
+        for (String connectionId : allIds) {
+            if (ctx.equals(registry.getContext(connectionId))) {
+                log.info("[WebRTCHandler] Channel closed, cleaning up connectionId={}", connectionId);
+                registry.unregister(connectionId);
+                try {
+                    webRTCProxyService.closePC(connectionId);
+                } catch (Exception e) {
+                    log.warn("[WebRTCHandler] closePC on channel inactive failed for connectionId={}: {}",
+                            connectionId, e.getMessage());
+                }
+            }
+        }
+        ctx.fireChannelInactive();
     }
 
     @Override

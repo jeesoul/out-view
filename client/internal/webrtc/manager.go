@@ -44,6 +44,9 @@ type Manager struct {
 	onICEComplete  func()
 
 	closeOnce sync.Once
+
+	// connectedAt is set when the state transitions to StateWebRTCConnected.
+	connectedAt atomic.Pointer[time.Time]
 }
 
 type stateTransition struct {
@@ -295,6 +298,35 @@ func (m *Manager) ConnectionID() string {
 	return m.connectionID
 }
 
+// IsConnected returns true if the WebRTC DataChannel is currently open
+// (i.e. the state is StateWebRTCConnected).
+func (m *Manager) IsConnected() bool {
+	return ConnectionState(m.state.Load()) == StateWebRTCConnected
+}
+
+// ManagerStats holds a snapshot of Manager statistics.
+type ManagerStats struct {
+	ConnectionID string
+	State        ConnectionState
+	// Uptime is the duration since the connection reached StateWebRTCConnected.
+	// Zero if the connection has never been established.
+	Uptime time.Duration
+}
+
+// Stats returns a snapshot of the Manager's current state and uptime.
+func (m *Manager) Stats() ManagerStats {
+	state := ConnectionState(m.state.Load())
+	var uptime time.Duration
+	if t := m.connectedAt.Load(); t != nil {
+		uptime = time.Since(*t)
+	}
+	return ManagerStats{
+		ConnectionID: m.connectionID,
+		State:        state,
+		Uptime:       uptime,
+	}
+}
+
 func (m *Manager) setupDataChannel(dc *pionwebrtc.DataChannel) {
 	dc.SetBufferedAmountLowThreshold(BufferLowWaterMark)
 
@@ -401,6 +433,10 @@ func (m *Manager) stateActor() {
 			m.state.Store(int32(trans.to))
 			m.logger.Info("State transition",
 				"from", current, "to", trans.to, "reason", trans.reason)
+			if trans.to == StateWebRTCConnected {
+				now := time.Now()
+				m.connectedAt.Store(&now)
+			}
 			m.mu.RLock()
 			fn := m.onStateChange
 			m.mu.RUnlock()

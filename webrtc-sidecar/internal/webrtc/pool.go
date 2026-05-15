@@ -4,9 +4,17 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/outview/webrtc-sidecar/internal/ipc"
 )
+
+// PoolStats holds snapshot statistics for a Pool.
+type PoolStats struct {
+	ActiveConnections int
+	TotalCreated      int64
+	TotalClosed       int64
+}
 
 // Pool manages multiple WebRTC Managers, one per connectionID.
 type Pool struct {
@@ -14,6 +22,11 @@ type Pool struct {
 	managers map[string]*Manager
 	registry *ipc.ConnRegistry
 	logger   *slog.Logger
+
+	onConnectionClosed func(connectionID string)
+
+	totalCreated atomic.Int64
+	totalClosed  atomic.Int64
 }
 
 // NewPool creates a new Pool.
@@ -26,6 +39,16 @@ func NewPool(registry *ipc.ConnRegistry, logger *slog.Logger) *Pool {
 		registry: registry,
 		logger:   logger,
 	}
+}
+
+// OnConnectionClosed registers a callback that is invoked whenever a connection
+// is removed from the pool. The callback receives the connectionID of the closed
+// connection. Only one callback can be registered at a time; calling this method
+// again replaces the previous callback.
+func (p *Pool) OnConnectionClosed(fn func(connectionID string)) {
+	p.mu.Lock()
+	p.onConnectionClosed = fn
+	p.mu.Unlock()
 }
 
 // Create creates a new Manager for the given connectionID.
@@ -44,6 +67,7 @@ func (p *Pool) Create(connectionID string) (*Manager, error) {
 	}
 
 	p.managers[connectionID] = m
+	p.totalCreated.Add(1)
 	p.logger.Info("Created WebRTC manager", "connectionId", connectionID, "total", len(p.managers))
 	return m, nil
 }
@@ -57,17 +81,24 @@ func (p *Pool) Get(connectionID string) (*Manager, bool) {
 }
 
 // Remove closes and removes the Manager for the given connectionID.
+// If an OnConnectionClosed callback is registered it is invoked after the
+// Manager is closed.
 func (p *Pool) Remove(connectionID string) {
 	p.mu.Lock()
 	m, ok := p.managers[connectionID]
 	if ok {
 		delete(p.managers, connectionID)
 	}
+	cb := p.onConnectionClosed
 	p.mu.Unlock()
 
 	if m != nil {
 		m.Close()
+		p.totalClosed.Add(1)
 		p.logger.Info("Removed WebRTC manager", "connectionId", connectionID)
+		if cb != nil {
+			cb(connectionID)
+		}
 	}
 }
 
@@ -75,14 +106,21 @@ func (p *Pool) Remove(connectionID string) {
 func (p *Pool) CloseAll() {
 	p.mu.Lock()
 	managers := make([]*Manager, 0, len(p.managers))
-	for _, m := range p.managers {
+	ids := make([]string, 0, len(p.managers))
+	for id, m := range p.managers {
 		managers = append(managers, m)
+		ids = append(ids, id)
 	}
 	p.managers = make(map[string]*Manager)
+	cb := p.onConnectionClosed
 	p.mu.Unlock()
 
-	for _, m := range managers {
+	for i, m := range managers {
 		m.Close()
+		p.totalClosed.Add(1)
+		if cb != nil {
+			cb(ids[i])
+		}
 	}
 	p.logger.Info("Closed all WebRTC managers")
 }
@@ -94,3 +132,16 @@ func (p *Pool) Count() int {
 	p.mu.RUnlock()
 	return n
 }
+
+// Stats returns a snapshot of pool statistics.
+func (p *Pool) Stats() PoolStats {
+	p.mu.RLock()
+	active := len(p.managers)
+	p.mu.RUnlock()
+	return PoolStats{
+		ActiveConnections: active,
+		TotalCreated:      p.totalCreated.Load(),
+		TotalClosed:       p.totalClosed.Load(),
+	}
+}
+
