@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -76,12 +77,16 @@ public class WebRTCConnectionRegistry {
     }
 
     /**
-     * Return an unmodifiable snapshot of all active connection IDs.
+     * Return an unmodifiable snapshot of all active connection IDs at the time of the call.
      *
-     * @return set of active connection IDs
+     * <p>The returned set is a true snapshot — it is not backed by the live map, so
+     * callers may safely iterate it while concurrently mutating the registry (e.g. calling
+     * {@link #unregister(String)} inside the loop).
+     *
+     * @return snapshot of active connection IDs
      */
     public Set<String> getAll() {
-        return Collections.unmodifiableSet(connections.keySet());
+        return Collections.unmodifiableSet(new HashSet<>(connections.keySet()));
     }
 
     /**

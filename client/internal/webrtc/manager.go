@@ -317,8 +317,10 @@ type ManagerStats struct {
 func (m *Manager) Stats() ManagerStats {
 	state := ConnectionState(m.state.Load())
 	var uptime time.Duration
-	if t := m.connectedAt.Load(); t != nil {
-		uptime = time.Since(*t)
+	if state == StateWebRTCConnected {
+		if t := m.connectedAt.Load(); t != nil {
+			uptime = time.Since(*t)
+		}
 	}
 	return ManagerStats{
 		ConnectionID: m.connectionID,

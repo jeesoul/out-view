@@ -54,6 +54,10 @@ func TestManager_IsConnected_FalseAfterClose(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
+	if !m.IsConnected() {
+		t.Fatal("precondition failed: manager never reached StateWebRTCConnected")
+	}
+
 	m.Close()
 
 	if m.IsConnected() {
