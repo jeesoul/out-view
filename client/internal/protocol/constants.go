@@ -22,6 +22,14 @@ const (
 	TypeRegisterAck     byte = 5 // Registration response
 	TypeHeartbeatAck    byte = 6 // Heartbeat response
 	TypeCloseConnection byte = 7 // Connection close notification
+
+	// WebRTC signaling message types
+	TypeWebRTCOffer        byte = 8  // Client → Server: WebRTC offer SDP
+	TypeWebRTCAnswer       byte = 9  // Server → Client: WebRTC answer SDP
+	TypeWebRTCICECandidate byte = 10 // Bidirectional: ICE candidate
+	TypeWebRTCICEComplete  byte = 11 // Bidirectional: ICE gathering complete
+	TypeWebRTCEstablished  byte = 12 // Server → Client: WebRTC connection established
+	TypeWebRTCFailed       byte = 13 // Bidirectional: WebRTC connection failed
 )
 
 // Default heartbeat interval (30 seconds)

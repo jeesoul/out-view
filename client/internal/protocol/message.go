@@ -167,6 +167,113 @@ func ParseDataPacket(body []byte) (*DataPacket, error) {
 	return &DataPacket{ConnectionID: connectionID, Data: data}, nil
 }
 
+// WebRTCOfferBody is the body for TypeWebRTCOffer and TypeWebRTCAnswer messages.
+type WebRTCOfferBody struct {
+	ConnectionID string `json:"connectionId"`
+	SDP          string `json:"sdp"`
+	SDPType      string `json:"sdpType"` // "offer" or "answer"
+}
+
+// WebRTCICECandidateBody is the body for TypeWebRTCICECandidate messages.
+type WebRTCICECandidateBody struct {
+	ConnectionID  string  `json:"connectionId"`
+	Candidate     string  `json:"candidate"`
+	SDPMid        string  `json:"sdpMid,omitempty"`
+	SDPMLineIndex *uint16 `json:"sdpMLineIndex,omitempty"`
+}
+
+// WebRTCConnectionBody is the body for TypeWebRTCICEComplete, TypeWebRTCEstablished, TypeWebRTCFailed.
+type WebRTCConnectionBody struct {
+	ConnectionID string `json:"connectionId"`
+	Reason       string `json:"reason,omitempty"` // only for Failed
+}
+
+// NewWebRTCOfferMessage creates a TypeWebRTCOffer message.
+func NewWebRTCOfferMessage(connectionID, sdp string) (*Message, error) {
+	body, err := json.Marshal(WebRTCOfferBody{ConnectionID: connectionID, SDP: sdp, SDPType: "offer"})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc offer: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCOffer, Length: len(body)}, Body: body}, nil
+}
+
+// NewWebRTCAnswerMessage creates a TypeWebRTCAnswer message.
+func NewWebRTCAnswerMessage(connectionID, sdp string) (*Message, error) {
+	body, err := json.Marshal(WebRTCOfferBody{ConnectionID: connectionID, SDP: sdp, SDPType: "answer"})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc answer: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCAnswer, Length: len(body)}, Body: body}, nil
+}
+
+// NewWebRTCICECandidateMessage creates a TypeWebRTCICECandidate message.
+func NewWebRTCICECandidateMessage(connectionID, candidate, sdpMid string, sdpMLineIndex *uint16) (*Message, error) {
+	body, err := json.Marshal(WebRTCICECandidateBody{
+		ConnectionID:  connectionID,
+		Candidate:     candidate,
+		SDPMid:        sdpMid,
+		SDPMLineIndex: sdpMLineIndex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc ice candidate: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCICECandidate, Length: len(body)}, Body: body}, nil
+}
+
+// NewWebRTCICECompleteMessage creates a TypeWebRTCICEComplete message.
+func NewWebRTCICECompleteMessage(connectionID string) (*Message, error) {
+	body, err := json.Marshal(WebRTCConnectionBody{ConnectionID: connectionID})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc ice complete: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCICEComplete, Length: len(body)}, Body: body}, nil
+}
+
+// NewWebRTCEstablishedMessage creates a TypeWebRTCEstablished message.
+func NewWebRTCEstablishedMessage(connectionID string) (*Message, error) {
+	body, err := json.Marshal(WebRTCConnectionBody{ConnectionID: connectionID})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc established: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCEstablished, Length: len(body)}, Body: body}, nil
+}
+
+// NewWebRTCFailedMessage creates a TypeWebRTCFailed message.
+func NewWebRTCFailedMessage(connectionID, reason string) (*Message, error) {
+	body, err := json.Marshal(WebRTCConnectionBody{ConnectionID: connectionID, Reason: reason})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webrtc failed: %w", err)
+	}
+	return &Message{Header: &MessageHeader{Magic: MagicNumber, Version: Version, Type: TypeWebRTCFailed, Length: len(body)}, Body: body}, nil
+}
+
+// ParseWebRTCOfferBody parses the body of a TypeWebRTCOffer or TypeWebRTCAnswer message.
+func ParseWebRTCOfferBody(body []byte) (*WebRTCOfferBody, error) {
+	var b WebRTCOfferBody
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, fmt.Errorf("parse webrtc offer body: %w", err)
+	}
+	return &b, nil
+}
+
+// ParseWebRTCICECandidateBody parses the body of a TypeWebRTCICECandidate message.
+func ParseWebRTCICECandidateBody(body []byte) (*WebRTCICECandidateBody, error) {
+	var b WebRTCICECandidateBody
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, fmt.Errorf("parse webrtc ice candidate body: %w", err)
+	}
+	return &b, nil
+}
+
+// ParseWebRTCConnectionBody parses the body of ICEComplete, Established, or Failed messages.
+func ParseWebRTCConnectionBody(body []byte) (*WebRTCConnectionBody, error) {
+	var b WebRTCConnectionBody
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, fmt.Errorf("parse webrtc connection body: %w", err)
+	}
+	return &b, nil
+}
+
 // NewCloseConnectionMessage creates a close-connection notification.
 // Body format: same binary framing — connectionId with zero-length payload.
 func NewCloseConnectionMessage(connectionID string) *Message {

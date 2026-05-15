@@ -34,6 +34,14 @@ public final class ProtocolConstants {
     public static final byte TYPE_ERROR = 4;         // 错误消息
     public static final byte TYPE_CLOSE_CONNECTION = 7; // 连接关闭通知
 
+    // WebRTC signaling message types
+    public static final byte TYPE_WEBRTC_OFFER         = 8;  // Client → Server: WebRTC offer SDP
+    public static final byte TYPE_WEBRTC_ANSWER        = 9;  // Server → Client: WebRTC answer SDP
+    public static final byte TYPE_WEBRTC_ICE_CANDIDATE = 10; // Bidirectional: ICE candidate
+    public static final byte TYPE_WEBRTC_ICE_COMPLETE  = 11; // Bidirectional: ICE gathering complete
+    public static final byte TYPE_WEBRTC_ESTABLISHED   = 12; // Server → Client: WebRTC connection established
+    public static final byte TYPE_WEBRTC_FAILED        = 13; // Bidirectional: WebRTC connection failed
+
     /**
      * 最大消息体长度 (10MB)
      */

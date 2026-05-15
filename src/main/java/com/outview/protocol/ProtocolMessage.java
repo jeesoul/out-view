@@ -1,5 +1,7 @@
 package com.outview.protocol;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,6 +17,8 @@ import java.nio.charset.StandardCharsets;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ProtocolMessage {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private MessageHeader header;
     private byte[] body;
@@ -115,5 +119,97 @@ public class ProtocolMessage {
                 .header(MessageHeader.error(body.length))
                 .body(body)
                 .build();
+    }
+
+    public static ProtocolMessage webrtcOffer(String connectionId, String sdp) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            node.put("sdp", sdp);
+            node.put("sdpType", "offer");
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcOffer(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc offer message", e);
+        }
+    }
+
+    public static ProtocolMessage webrtcAnswer(String connectionId, String sdp) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            node.put("sdp", sdp);
+            node.put("sdpType", "answer");
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcAnswer(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc answer message", e);
+        }
+    }
+
+    public static ProtocolMessage webrtcICECandidate(String connectionId, String candidate, String sdpMid, Integer sdpMLineIndex) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            node.put("candidate", candidate);
+            if (sdpMid != null) node.put("sdpMid", sdpMid);
+            if (sdpMLineIndex != null) node.put("sdpMLineIndex", sdpMLineIndex);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcICECandidate(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc ice candidate message", e);
+        }
+    }
+
+    public static ProtocolMessage webrtcICEComplete(String connectionId) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcICEComplete(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc ice complete message", e);
+        }
+    }
+
+    public static ProtocolMessage webrtcEstablished(String connectionId) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcEstablished(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc established message", e);
+        }
+    }
+
+    public static ProtocolMessage webrtcFailed(String connectionId, String reason) {
+        try {
+            ObjectNode node = MAPPER.createObjectNode();
+            node.put("connectionId", connectionId);
+            if (reason != null) node.put("reason", reason);
+            byte[] body = MAPPER.writeValueAsBytes(node);
+            return ProtocolMessage.builder()
+                    .header(MessageHeader.webrtcFailed(body.length))
+                    .body(body)
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create webrtc failed message", e);
+        }
     }
 }

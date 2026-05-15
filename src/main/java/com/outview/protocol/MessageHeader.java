@@ -91,4 +91,64 @@ public class MessageHeader {
                 .reserved((short) 0)
                 .build();
     }
+
+    public static MessageHeader webrtcOffer(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_OFFER)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
+
+    public static MessageHeader webrtcAnswer(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_ANSWER)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
+
+    public static MessageHeader webrtcICECandidate(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_ICE_CANDIDATE)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
+
+    public static MessageHeader webrtcICEComplete(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_ICE_COMPLETE)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
+
+    public static MessageHeader webrtcEstablished(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_ESTABLISHED)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
+
+    public static MessageHeader webrtcFailed(int bodyLength) {
+        return MessageHeader.builder()
+                .magic(ProtocolConstants.MAGIC_NUMBER)
+                .version(ProtocolConstants.VERSION)
+                .type(ProtocolConstants.TYPE_WEBRTC_FAILED)
+                .length(bodyLength)
+                .reserved((short) 0)
+                .build();
+    }
 }
