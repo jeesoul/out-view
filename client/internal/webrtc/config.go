@@ -18,6 +18,7 @@ type Config struct {
 	WebRTCTimeout      time.Duration // total connection timeout (default 8s)
 	DTLSTimeout        time.Duration // DTLS handshake timeout (default 10s)
 	ICETransportPolicy string        // "all" or "relay"
+	IdleTimeout        time.Duration // close after this long with no data (default 60s, 0=disabled)
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -26,6 +27,7 @@ func DefaultConfig() *Config {
 		EnableWebRTC:  true,
 		WebRTCTimeout: 8 * time.Second,
 		DTLSTimeout:   10 * time.Second,
+		IdleTimeout:   60 * time.Second,
 		ICEServers: []pionwebrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 			{URLs: []string{"stun:stun1.l.google.com:19302"}},

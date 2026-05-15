@@ -50,6 +50,10 @@ type Manager struct {
 
 	// fallbackCount tracks the total number of times fallback was triggered.
 	fallbackCount atomic.Int64
+
+	// idleTimer fires when no data has been sent/received for IdleTimeout.
+	idleTimer   *time.Timer
+	idleTimerMu sync.Mutex
 }
 
 type stateTransition struct {
@@ -76,6 +80,9 @@ func NewManager(connectionID string, cfg *Config, logger *slog.Logger) *Manager 
 		sendResumeCh: make(chan struct{}, 1),
 	}
 	go m.stateActor()
+	if cfg.IdleTimeout > 0 {
+		go m.idleTimeoutWatcher()
+	}
 	return m
 }
 
@@ -252,6 +259,7 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	}
 
 	if dc.BufferedAmount() < BufferHighWaterMark {
+		m.resetIdleTimer()
 		return dc.Send(data)
 	}
 
@@ -284,34 +292,101 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 		}
 	}
 
+	m.resetIdleTimer()
 	return dc.Send(data)
 }
 
+// closeWithReason initiates cleanup with a named trigger reason.
+// It is safe to call from any goroutine and is idempotent.
+func (m *Manager) closeWithReason(reason string) {
+	m.logger.Info("Closing manager", "trigger", reason)
+	m.closeOnce.Do(func() {
+		m.doClose(reason)
+	})
+}
+
 // Close shuts down the Manager and releases all resources.
+// Trigger 5: Application shutdown — graceful shutdown signal.
 func (m *Manager) Close() error {
 	m.closeOnce.Do(func() {
-		m.requestStateTransition(StateClosing, "explicit close")
-		m.cancel()
-
-		m.mu.Lock()
-		dc := m.dc
-		pc := m.pc
-		m.dc = nil
-		m.pc = nil
-		m.mu.Unlock()
-
-		if dc != nil {
-			dc.Close()
-		}
-		if pc != nil {
-			pc.Close()
-		}
-
-		// Directly store StateClosed since ctx is cancelled and stateActor may have exited
-		m.state.Store(int32(StateClosed))
-		m.logger.Info("Manager closed")
+		m.doClose("application shutdown")
 	})
 	return nil
+}
+
+// doClose performs the actual cleanup in the correct order.
+// Must only be called once, guarded by closeOnce.
+func (m *Manager) doClose(reason string) {
+	m.logger.Info("Manager cleanup started", "trigger", reason)
+
+	// Step 1: Cancel context — stops all goroutines (including idleTimeoutWatcher).
+	m.requestStateTransition(StateClosing, reason)
+	m.cancel()
+
+	// Step 2: Stop idle timer.
+	m.idleTimerMu.Lock()
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+	}
+	m.idleTimerMu.Unlock()
+
+	// Step 3: Close DataChannel first, then PeerConnection.
+	m.mu.Lock()
+	dc := m.dc
+	pc := m.pc
+	m.dc = nil
+	m.pc = nil
+	m.mu.Unlock()
+
+	if dc != nil {
+		if err := dc.Close(); err != nil {
+			m.logger.Warn("DataChannel close error", "err", err)
+		}
+	}
+	if pc != nil {
+		if err := pc.Close(); err != nil {
+			m.logger.Warn("PeerConnection close error", "err", err)
+		}
+	}
+
+	// Step 4: Mark closed and log completion.
+	m.state.Store(int32(StateClosed))
+	m.logger.Info("Manager closed", "trigger", reason)
+}
+
+// resetIdleTimer resets the idle timeout. Called on every send/receive.
+func (m *Manager) resetIdleTimer() {
+	if m.config.IdleTimeout <= 0 {
+		return
+	}
+	m.idleTimerMu.Lock()
+	defer m.idleTimerMu.Unlock()
+	if m.idleTimer == nil {
+		m.idleTimer = time.AfterFunc(m.config.IdleTimeout, func() {
+			m.closeWithReason("idle timeout")
+		})
+	} else {
+		m.idleTimer.Reset(m.config.IdleTimeout)
+	}
+}
+
+// idleTimeoutWatcher starts the initial idle timer and stops it when ctx is cancelled.
+// The timer itself fires closeWithReason; this goroutine just ensures cleanup on exit.
+func (m *Manager) idleTimeoutWatcher() {
+	// Start the initial idle timer.
+	m.idleTimerMu.Lock()
+	m.idleTimer = time.AfterFunc(m.config.IdleTimeout, func() {
+		m.closeWithReason("idle timeout")
+	})
+	m.idleTimerMu.Unlock()
+
+	// Wait for context cancellation, then stop the timer.
+	<-m.ctx.Done()
+	m.idleTimerMu.Lock()
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+	}
+	m.idleTimerMu.Unlock()
 }
 
 // State returns the current connection state.
@@ -370,15 +445,18 @@ func (m *Manager) setupDataChannel(dc *pionwebrtc.DataChannel) {
 
 	dc.OnOpen(func() {
 		m.logger.Info("DataChannel opened")
+		m.resetIdleTimer()
 		m.requestStateTransition(StateWebRTCConnected, "data channel open")
 	})
 
+	// Trigger 3: DataChannel onClose — DataChannel closes unexpectedly.
 	dc.OnClose(func() {
-		m.logger.Info("DataChannel closed")
-		m.triggerFallback("data channel closed")
+		m.logger.Info("DataChannel closed unexpectedly")
+		m.closeWithReason("data channel closed")
 	})
 
 	dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+		m.resetIdleTimer()
 		m.mu.RLock()
 		fn := m.onDataReceived
 		m.mu.RUnlock()
@@ -412,8 +490,9 @@ func (m *Manager) setupICEHandlers(pc *pionwebrtc.PeerConnection) {
 	pc.OnICEConnectionStateChange(func(state pionwebrtc.ICEConnectionState) {
 		m.logger.Info("ICE connection state", "state", state)
 		switch state {
+		// Trigger 2: ICE failed — pion reports ICE connection failed.
 		case pionwebrtc.ICEConnectionStateFailed:
-			m.triggerFallback("ICE connection failed")
+			m.closeWithReason("ICE connection failed")
 		case pionwebrtc.ICEConnectionStateDisconnected:
 			m.requestStateTransition(StateWebRTCReconnecting, "ICE disconnected")
 		}
@@ -425,7 +504,7 @@ func (m *Manager) setupConnectionHandlers(pc *pionwebrtc.PeerConnection) {
 		m.logger.Info("PeerConnection state", "state", state)
 		switch state {
 		case pionwebrtc.PeerConnectionStateFailed:
-			m.triggerFallback("peer connection failed")
+			m.closeWithReason("peer connection failed")
 		case pionwebrtc.PeerConnectionStateClosed:
 			m.requestStateTransition(StateClosing, "peer connection closed")
 		}

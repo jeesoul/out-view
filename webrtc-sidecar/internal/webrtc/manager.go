@@ -44,6 +44,14 @@ type Manager struct {
 	// sendResumeCh is signalled when the DataChannel buffer drains below the
 	// low-water mark, allowing blocked SendData calls to resume.
 	sendResumeCh chan struct{}
+
+	// idleTimeout is the duration of inactivity before the manager closes itself.
+	// Zero means disabled.
+	idleTimeout time.Duration
+
+	// idleTimer fires when no data has been sent/received for idleTimeout.
+	idleTimer   *time.Timer
+	idleTimerMu sync.Mutex
 }
 
 const (
@@ -63,18 +71,29 @@ const (
 
 // NewManager creates a new server-side WebRTC Manager.
 func NewManager(connectionID string, registry *ipc.ConnRegistry, logger *slog.Logger) *Manager {
+	return NewManagerWithIdleTimeout(connectionID, registry, logger, 60*time.Second)
+}
+
+// NewManagerWithIdleTimeout creates a new server-side WebRTC Manager with a configurable
+// idle timeout. Pass 0 to disable the idle timeout.
+func NewManagerWithIdleTimeout(connectionID string, registry *ipc.ConnRegistry, logger *slog.Logger, idleTimeout time.Duration) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
+	m := &Manager{
 		connectionID: connectionID,
 		registry:     registry,
 		logger:       logger.With("connectionId", connectionID),
 		ctx:          ctx,
 		cancel:       cancel,
 		sendResumeCh: make(chan struct{}, 1),
+		idleTimeout:  idleTimeout,
 	}
+	if idleTimeout > 0 {
+		go m.idleTimeoutWatcher()
+	}
+	return m
 }
 
 // CreatePeerConnection initializes the PeerConnection (answerer role).
@@ -132,23 +151,21 @@ func (m *Manager) CreatePeerConnection() error {
 		dc.OnOpen(func() {
 			m.logger.Info("DataChannel opened")
 			m.state.Store(stateConnected)
+			m.resetIdleTimer()
 			_ = m.registry.SendEvent(m.connectionID, &ipc.EventPayload{
 				ConnectionID: m.connectionID,
 				Event:        ipc.EventEstablished,
 			})
 		})
 
+		// Trigger 3: DataChannel onClose — DataChannel closes unexpectedly.
 		dc.OnClose(func() {
-			m.logger.Info("DataChannel closed")
-			m.state.Store(stateFailed)
-			_ = m.registry.SendEvent(m.connectionID, &ipc.EventPayload{
-				ConnectionID: m.connectionID,
-				Event:        ipc.EventFailed,
-				Reason:       "data channel closed",
-			})
+			m.logger.Info("DataChannel closed unexpectedly")
+			m.closeWithReason("data channel closed")
 		})
 
 		dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+			m.resetIdleTimer()
 			m.mu.RLock()
 			fwd := m.onDataForward
 			m.mu.RUnlock()
@@ -170,12 +187,15 @@ func (m *Manager) CreatePeerConnection() error {
 	pc.OnConnectionStateChange(func(state pionwebrtc.PeerConnectionState) {
 		m.logger.Info("PeerConnection state", "state", state)
 		if state == pionwebrtc.PeerConnectionStateFailed || state == pionwebrtc.PeerConnectionStateClosed {
-			m.state.Store(stateFailed)
-			_ = m.registry.SendEvent(m.connectionID, &ipc.EventPayload{
-				ConnectionID: m.connectionID,
-				Event:        ipc.EventFailed,
-				Reason:       state.String(),
-			})
+			m.closeWithReason(state.String())
+		}
+	})
+
+	// Trigger 2: ICE failed — pion reports ICE connection failed.
+	pc.OnICEConnectionStateChange(func(state pionwebrtc.ICEConnectionState) {
+		m.logger.Info("ICE connection state", "state", state)
+		if state == pionwebrtc.ICEConnectionStateFailed {
+			m.closeWithReason("ICE connection failed")
 		}
 	})
 
@@ -286,6 +306,7 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	}
 
 	if dc.BufferedAmount() < BufferHighWaterMark {
+		m.resetIdleTimer()
 		return dc.Send(data)
 	}
 
@@ -318,30 +339,101 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 		}
 	}
 
+	m.resetIdleTimer()
 	return dc.Send(data)
 }
 
+// closeWithReason initiates cleanup with a named trigger reason.
+// It is safe to call from any goroutine and is idempotent.
+func (m *Manager) closeWithReason(reason string) {
+	m.logger.Info("Closing manager", "trigger", reason)
+	m.closeOnce.Do(func() {
+		m.doClose(reason)
+	})
+}
+
 // Close shuts down the Manager.
+// Trigger 5: Application shutdown — graceful shutdown signal.
+// Trigger 1: Control channel disconnect — ctx cancellation propagates here.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
-		m.cancel()
-		m.state.Store(stateClosed)
-
-		m.mu.Lock()
-		dc := m.dc
-		pc := m.pc
-		m.dc = nil
-		m.pc = nil
-		m.mu.Unlock()
-
-		if dc != nil {
-			dc.Close()
-		}
-		if pc != nil {
-			pc.Close()
-		}
-		m.logger.Info("Manager closed")
+		m.doClose("application shutdown")
 	})
+}
+
+// doClose performs the actual cleanup in the correct order.
+// Must only be called once, guarded by closeOnce.
+func (m *Manager) doClose(reason string) {
+	m.logger.Info("Manager cleanup started", "trigger", reason)
+
+	// Step 1: Cancel context — stops all goroutines (including idleTimeoutWatcher).
+	m.cancel()
+
+	// Step 2: Stop idle timer.
+	m.idleTimerMu.Lock()
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+	}
+	m.idleTimerMu.Unlock()
+
+	// Step 3: Transition to closed state.
+	m.state.Store(stateClosed)
+
+	// Step 4: Close DataChannel first, then PeerConnection.
+	m.mu.Lock()
+	dc := m.dc
+	pc := m.pc
+	m.dc = nil
+	m.pc = nil
+	m.mu.Unlock()
+
+	if dc != nil {
+		if err := dc.Close(); err != nil {
+			m.logger.Warn("DataChannel close error", "err", err)
+		}
+	}
+	if pc != nil {
+		if err := pc.Close(); err != nil {
+			m.logger.Warn("PeerConnection close error", "err", err)
+		}
+	}
+
+	// Step 5: Log completion.
+	m.logger.Info("Manager closed", "trigger", reason)
+}
+
+// resetIdleTimer resets the idle timeout. Called on every send/receive.
+func (m *Manager) resetIdleTimer() {
+	if m.idleTimeout <= 0 {
+		return
+	}
+	m.idleTimerMu.Lock()
+	defer m.idleTimerMu.Unlock()
+	if m.idleTimer == nil {
+		m.idleTimer = time.AfterFunc(m.idleTimeout, func() {
+			m.closeWithReason("idle timeout")
+		})
+	} else {
+		m.idleTimer.Reset(m.idleTimeout)
+	}
+}
+
+// idleTimeoutWatcher starts the initial idle timer and stops it when ctx is cancelled.
+func (m *Manager) idleTimeoutWatcher() {
+	// Start the initial idle timer.
+	m.idleTimerMu.Lock()
+	m.idleTimer = time.AfterFunc(m.idleTimeout, func() {
+		m.closeWithReason("idle timeout")
+	})
+	m.idleTimerMu.Unlock()
+
+	// Wait for context cancellation, then stop the timer.
+	<-m.ctx.Done()
+	m.idleTimerMu.Lock()
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+	}
+	m.idleTimerMu.Unlock()
 }
 
 // State returns the current state (0=idle, 1=connecting, 2=connected, 3=failed, 4=closed).
