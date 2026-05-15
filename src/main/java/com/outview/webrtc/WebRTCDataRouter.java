@@ -67,17 +67,21 @@ public class WebRTCDataRouter {
      *
      * @param connectionId the WebRTC connection identifier
      * @param data         raw bytes to send
+     * @return {@code true} if the data was sent, {@code false} if it was dropped
+     *         (sidecar not connected or send failed)
      */
-    public void routeToWebRTC(String connectionId, byte[] data) {
+    public boolean routeToWebRTC(String connectionId, byte[] data) {
         if (!proxyService.isConnected()) {
             log.warn("[WebRTCDataRouter] Sidecar not connected, dropping outbound data for connectionId={}", connectionId);
-            return;
+            return false;
         }
         try {
             proxyService.sendData(connectionId, data);
             log.debug("[WebRTCDataRouter] Sent {} bytes to sidecar for connectionId={}", data.length, connectionId);
+            return true;
         } catch (IOException e) {
             log.error("[WebRTCDataRouter] Failed to send data to sidecar for connectionId={}: {}", connectionId, e.getMessage());
+            return false;
         }
     }
 
@@ -113,6 +117,20 @@ public class WebRTCDataRouter {
             return;
         }
         String event = payload.path("event").asText("");
+
+        if ("failed".equals(event)) {
+            String reason = payload.path("reason").asText("unknown");
+            log.warn("[WebRTCDataRouter] Sidecar failed event received: connectionId={}, reason={}", connectionId, reason);
+            unregisterDataListener(connectionId);
+            registry.unregister(connectionId);
+            try {
+                proxyService.closePC(connectionId);
+            } catch (Exception e) {
+                log.warn("[WebRTCDataRouter] closePC failed during failed-event cleanup for connectionId={}: {}", connectionId, e.getMessage());
+            }
+            return;
+        }
+
         if (!"data".equals(event)) {
             // Not a data event — ignore (other events are handled by WebRTCHandler).
             return;

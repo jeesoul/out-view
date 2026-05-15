@@ -105,7 +105,13 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
         }
         log.debug("[WebRTCHandler] Routing TYPE_DATA via WebRTC DataChannel: connectionId={}, bytes={}",
                 connectionId, packet.getData().length);
-        dataRouter.routeToWebRTC(connectionId, packet.getData());
+        boolean sent = dataRouter.routeToWebRTC(connectionId, packet.getData());
+        if (!sent) {
+            // Sidecar not reachable (stale registry entry or transient disconnect) —
+            // fall through to the TCP relay path instead of silently dropping.
+            log.warn("[WebRTCHandler] routeToWebRTC failed for connectionId={}, falling back to TCP relay", connectionId);
+            return false;
+        }
         return true;
     }
 
@@ -158,6 +164,9 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
                     } else if ("established".equals(event)) {
                         log.info("[WebRTCHandler] WebRTC established (sidecar event): connectionId={}", connectionId);
                         ctx.writeAndFlush(ProtocolMessage.webrtcEstablished(connectionId));
+                        // Populate the registry now so the data listener can deliver
+                        // inbound data immediately — before the client sends TYPE_WEBRTC_ESTABLISHED.
+                        registry.register(connectionId, ctx);
                         // Switch the signaling listener to a data listener now that the
                         // DataChannel is open. The data router will handle 'data' events.
                         dataRouter.registerDataListener(connectionId);
@@ -228,10 +237,9 @@ public class WebRTCHandler extends SimpleChannelInboundHandler<ProtocolMessage> 
 
     private void handleEstablished(ChannelHandlerContext ctx, ProtocolMessage msg) {
         String connectionId = parseConnectionId(msg);
-        log.info("[WebRTCHandler] WebRTC established: connectionId={}", connectionId);
-        if (connectionId != null) {
-            registry.register(connectionId, ctx);
-        }
+        log.info("[WebRTCHandler] WebRTC established (client ack): connectionId={}", connectionId);
+        // Registry is already populated when the sidecar emits 'established'.
+        // This client-sent message is just an acknowledgement — no action needed.
     }
 
     // -------------------------------------------------------------------------

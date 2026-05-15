@@ -254,6 +254,18 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 	defer timer.Stop()
 
 	for dc.BufferedAmount() >= BufferHighWaterMark {
+		// Drain any pending resume signal before blocking to avoid a TOCTOU stall:
+		// OnBufferedAmountLow may have fired between the loop condition check and
+		// the select below, consuming the signal. Draining here ensures we don't
+		// block unnecessarily when the buffer has already drained.
+		select {
+		case <-m.sendResumeCh:
+		default:
+		}
+		// Re-check after draining — buffer may have already fallen below the mark.
+		if dc.BufferedAmount() < BufferHighWaterMark {
+			break
+		}
 		m.logger.Debug("Buffer full, waiting", "buffered", dc.BufferedAmount())
 		select {
 		case <-m.sendResumeCh:
@@ -261,6 +273,8 @@ func (m *Manager) SendData(ctx context.Context, data []byte) error {
 			return ctx.Err()
 		case <-timer.C:
 			return errors.New("send timeout: buffer full")
+		case <-m.ctx.Done():
+			return fmt.Errorf("webrtc: manager closed")
 		}
 	}
 
