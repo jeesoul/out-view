@@ -100,6 +100,9 @@ func (m *Manager) SetOnStateChange(fn func(ConnectionState)) {
 }
 
 // SetOnFallback sets the callback triggered when WebRTC fails and TCP fallback should start.
+// The callback is invoked outside any Manager lock. Callers must not re-enter the Manager
+// from within the callback while holding any external lock that the Manager might also acquire,
+// to prevent deadlock.
 func (m *Manager) SetOnFallback(fn func(reason string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

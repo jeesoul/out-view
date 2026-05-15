@@ -431,8 +431,11 @@ func (c *Client) reconnectLoop() {
 				logger.Info("Re-initiating WebRTC offer after TCP reconnect")
 				// Create a fresh Manager for the new connection attempt.
 				connID := c.webrtcManager.ConnectionID()
+				c.webrtcMu.Lock()
 				c.webrtcManager = clientwebrtc.NewManager(connID, c.webrtcCfg, nil)
-				go c.initiateWebRTCOffer()
+				mgr := c.webrtcManager
+				c.webrtcMu.Unlock()
+				go c.initiateWebRTCOffer(mgr)
 			}
 
 			break
@@ -493,7 +496,10 @@ func (c *Client) handleRegisterAck(msg *protocol.Message) {
 
 	// If WebRTC is enabled and registration succeeded, initiate the offer.
 	if resp.Success && c.webrtcManager != nil {
-		go c.initiateWebRTCOffer()
+		c.webrtcMu.Lock()
+		mgr := c.webrtcManager
+		c.webrtcMu.Unlock()
+		go c.initiateWebRTCOffer(mgr)
 	}
 }
 
@@ -665,8 +671,9 @@ func (c *Client) handleError(msg *protocol.Message) {
 
 // initiateWebRTCOffer creates a PeerConnection, wires ICE callbacks, and sends
 // the SDP offer to the server. Called in a goroutine after successful registration.
-func (c *Client) initiateWebRTCOffer() {
-	mgr := c.webrtcManager
+// mgr must be the Manager snapshot captured by the caller under webrtcMu, so this
+// goroutine holds a stable reference without racing on c.webrtcManager.
+func (c *Client) initiateWebRTCOffer(mgr *clientwebrtc.Manager) {
 	if mgr == nil {
 		return
 	}
@@ -733,7 +740,9 @@ func (c *Client) initiateWebRTCOffer() {
 		webrtcTimeout = c.webrtcCfg.WebRTCTimeout
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	// Use a CreateOffer timeout derived from the configured WebRTC timeout so it
+	// scales with the deployment environment rather than being a fixed constant.
+	ctx, cancel := context.WithTimeout(c.ctx, webrtcTimeout*4)
 	defer cancel()
 
 	offer, err := mgr.CreateOffer(ctx)
@@ -748,11 +757,6 @@ func (c *Client) initiateWebRTCOffer() {
 	connID := mgr.ConnectionID()
 	logger.Info("Sending WebRTC offer to server: connectionId=%s", connID)
 
-	// Mark WebRTC as enabled now that we have sent an offer.
-	c.webrtcMu.Lock()
-	c.webrtcEnabled = true
-	c.webrtcMu.Unlock()
-
 	offerMsg, err := protocol.NewWebRTCOfferMessage(connID, offer.SDP)
 	if err != nil {
 		logger.Error("Failed to create offer message: %v", err)
@@ -763,9 +767,16 @@ func (c *Client) initiateWebRTCOffer() {
 		return
 	}
 
+	// Mark WebRTC as enabled only after the offer has been successfully sent.
+	c.webrtcMu.Lock()
+	c.webrtcEnabled = true
+	c.webrtcMu.Unlock()
+
 	// Start a timeout watchdog: if WebRTC is not connected within webrtcTimeout,
 	// trigger fallback to TCP relay.
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		timer := time.NewTimer(webrtcTimeout)
 		defer timer.Stop()
 		select {
@@ -881,11 +892,12 @@ func (c *Client) handleWebRTCFailed(msg *protocol.Message) {
 	// Ensure data routing falls back to TCP.
 	c.webrtcMu.Lock()
 	c.usingWebRTC = false
+	mgr := c.webrtcManager
 	c.webrtcMu.Unlock()
 
 	// Close the local WebRTC manager so it transitions to failed/closed state.
-	if c.webrtcManager != nil {
-		c.webrtcManager.Close()
+	if mgr != nil {
+		mgr.Close()
 	}
 }
 
