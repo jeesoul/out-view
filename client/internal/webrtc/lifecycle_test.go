@@ -152,6 +152,27 @@ func TestManager_Trigger_ApplicationShutdown(t *testing.T) {
 	}
 }
 
+// Trigger 1: Control channel disconnect — ctx cancellation propagates here.
+func TestManager_Trigger_ControlChannelDisconnect(t *testing.T) {
+	m := NewManager("lc-ctrl-disconnect", DefaultConfig(), nil)
+
+	// Simulate IPC disconnect by cancelling the context externally.
+	m.cancel()
+
+	// Wait for the goroutine to propagate the close.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if m.State() == StateClosed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if m.State() != StateClosed {
+		t.Errorf("expected StateClosed after control channel disconnect, got %v", m.State())
+	}
+}
+
 // TestManager_CloseWithReason_Idempotent verifies that closeWithReason called
 // multiple times with different reasons only executes cleanup once.
 func TestManager_CloseWithReason_Idempotent(t *testing.T) {

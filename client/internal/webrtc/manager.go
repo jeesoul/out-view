@@ -83,6 +83,11 @@ func NewManager(connectionID string, cfg *Config, logger *slog.Logger) *Manager 
 	if cfg.IdleTimeout > 0 {
 		go m.idleTimeoutWatcher()
 	}
+	// Trigger 1: Control channel disconnect — ctx cancellation propagates here.
+	go func() {
+		<-m.ctx.Done()
+		m.closeWithReason("control channel disconnect")
+	}()
 	return m
 }
 
@@ -319,8 +324,10 @@ func (m *Manager) Close() error {
 func (m *Manager) doClose(reason string) {
 	m.logger.Info("Manager cleanup started", "trigger", reason)
 
-	// Step 1: Cancel context — stops all goroutines (including idleTimeoutWatcher).
-	m.requestStateTransition(StateClosing, reason)
+	// Step 1: Transition to Closing directly (not via stateActor) to prevent a
+	// race where stateActor processes the buffered StateClosing message after
+	// StateClosed is stored below.
+	m.state.Store(int32(StateClosing))
 	m.cancel()
 
 	// Step 2: Stop idle timer.

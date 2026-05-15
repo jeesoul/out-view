@@ -93,6 +93,11 @@ func NewManagerWithIdleTimeout(connectionID string, registry *ipc.ConnRegistry, 
 	if idleTimeout > 0 {
 		go m.idleTimeoutWatcher()
 	}
+	// Trigger 1: Control channel disconnect — ctx cancellation propagates here.
+	go func() {
+		<-m.ctx.Done()
+		m.closeWithReason("control channel disconnect")
+	}()
 	return m
 }
 
