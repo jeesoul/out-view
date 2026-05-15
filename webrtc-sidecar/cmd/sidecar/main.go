@@ -12,12 +12,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
 
 	"github.com/outview/webrtc-sidecar/internal/ipc"
+	"github.com/outview/webrtc-sidecar/internal/webrtc"
 )
 
 func defaultIPCAddress() string {
@@ -39,7 +41,19 @@ func main() {
 		os.Remove(*ipcAddr)
 	}
 
+	// Create the WebRTC pool so it can be cleaned up on IPC disconnect.
+	registry := ipc.NewConnRegistry()
+	pool := webrtc.NewPool(registry, slog.Default())
+
 	srv := ipc.NewServer(ipc.DefaultHandler)
+
+	// When the Java server disconnects (or restarts), close all active
+	// PeerConnections so the sidecar is ready for a fresh connection.
+	srv.SetOnDisconnect(func(remoteAddr string) {
+		log.Printf("[Sidecar] IPC connection from %s closed — cleaning up all PeerConnections", remoteAddr)
+		pool.CloseAll()
+	})
+
 	if err := srv.ListenIPC(*ipcAddr); err != nil {
 		log.Fatalf("[Sidecar] Failed to start IPC server: %v", err)
 	}
@@ -51,6 +65,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Printf("[Sidecar] Received signal %v, shutting down...", sig)
+	pool.CloseAll()
 	srv.Close()
 	log.Println("[Sidecar] Stopped.")
 }

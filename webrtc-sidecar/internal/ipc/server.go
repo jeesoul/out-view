@@ -34,6 +34,12 @@ type Server struct {
 	done        chan struct{}
 	wg          sync.WaitGroup
 	closeOnce   sync.Once
+
+	// onDisconnect is called (in a goroutine) whenever a client connection closes.
+	// It receives the remote address of the disconnected client.
+	// Protected by mu.
+	mu           sync.RWMutex
+	onDisconnect func(remoteAddr string)
 }
 
 // NewServer creates a new IPC server with the given message handler.
@@ -101,9 +107,27 @@ func (s *Server) Close() {
 	})
 }
 
+// SetOnDisconnect registers a callback that is invoked whenever a client
+// connection closes. The callback receives the remote address of the
+// disconnected client. Only one callback can be registered at a time.
+func (s *Server) SetOnDisconnect(fn func(remoteAddr string)) {
+	s.mu.Lock()
+	s.onDisconnect = fn
+	s.mu.Unlock()
+}
+
 // ConnCount returns the current number of active connections.
 func (s *Server) ConnCount() int64 {
 	return atomic.LoadInt64(&s.connCount)
+}
+
+// Addr returns the address the server is listening on.
+// Returns an empty string if the server is not listening.
+func (s *Server) Addr() string {
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
 }
 
 func (s *Server) acceptLoop() {
@@ -125,10 +149,19 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
+	remoteAddr := conn.RemoteAddr().String()
 	defer func() {
 		conn.Close()
 		atomic.AddInt64(&s.connCount, -1)
 		s.wg.Done()
+
+		// Notify disconnect listener (if any).
+		s.mu.RLock()
+		cb := s.onDisconnect
+		s.mu.RUnlock()
+		if cb != nil {
+			cb(remoteAddr)
+		}
 	}()
 
 	for {
