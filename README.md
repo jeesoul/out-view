@@ -13,9 +13,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/java-8%2B-orange.svg" alt="Java">
-  <img src="https://img.shields.io/badge/go-1.21%2B-00ADD8.svg" alt="Go">
+  <img src="https://img.shields.io/badge/go-1.24%2B-00ADD8.svg" alt="Go">
+  <img src="https://img.shields.io/badge/webrtc-pion%20v4-purple.svg" alt="WebRTC">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
 
@@ -29,9 +30,31 @@
 
 - 🎯 **零配置启动** - 开箱即用，5分钟即可完成部署
 - ⚡ **高性能转发** - 基于 Netty NIO 框架，支持高并发连接
+- 🚀 **WebRTC 传输** - v1.2.0 新增 WebRTC DataChannel，延迟降低 30-50%
 - 🔐 **安全认证** - Token 机制 + 可选 SSL/TLS 加密
 - 🌐 **跨平台支持** - 服务端 Java，客户端 Go，支持 Windows/Linux/macOS
 - 📦 **轻量级** - 服务端 JAR 仅 29MB，客户端 exe 仅 2.4MB
+
+---
+
+## v1.2.0 新特性：WebRTC 传输优化
+
+outView 1.2.0 引入了 WebRTC DataChannel 传输层，显著提升远程桌面体验：
+
+- **延迟降低 30-50%**: WebRTC UDP 传输 vs TCP 转发
+- **弱网稳定性提升**: SCTP 可靠传输 + ICE 重连
+- **自动降级**: WebRTC 失败时无缝切换到 TCP，保证连接成功率
+- **Sidecar 架构**: 独立 Go 进程管理 WebRTC，不影响 Java 服务稳定性
+
+### WebRTC 架构
+
+```
+Java 服务器 ←→ IPC (Unix Socket/Named Pipe) ←→ Go WebRTC Sidecar
+                                                        ↕ WebRTC DataChannel
+                                                   Go 客户端 (pion/webrtc v4)
+```
+
+详见 [WebRTC 用户指南](docs/webrtc-user-guide.md) | [故障排查](docs/webrtc-troubleshooting.md)
 
 ---
 
