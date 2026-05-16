@@ -240,9 +240,11 @@ main() {
     test_bandwidth_limit
     test_mobile_network
 
-    # Count results
-    pass_count=$(grep -c "^\[PASS\]" "${REPORT_FILE}" || echo 0)
-    fail_count=$(grep -c "^\[FAIL\]" "${REPORT_FILE}" || echo 0)
+    # Count results. grep -c prints "0" on no match AND exits 1, so we
+    # cannot use `|| echo 0` here — it would duplicate the count and break
+    # the integer comparison below. Suppress stderr and trust grep's output.
+    pass_count=$(grep -c "^\[PASS\]" "${REPORT_FILE}" 2>/dev/null) || pass_count=0
+    fail_count=$(grep -c "^\[FAIL\]" "${REPORT_FILE}" 2>/dev/null) || fail_count=0
 
     log ""
     log "=== Summary ==="
