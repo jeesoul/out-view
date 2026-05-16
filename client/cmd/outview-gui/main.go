@@ -1,3 +1,5 @@
+//go:build !headless_test
+
 package main
 
 import (
