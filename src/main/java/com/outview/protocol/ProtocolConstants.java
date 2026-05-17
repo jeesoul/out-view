@@ -42,6 +42,10 @@ public final class ProtocolConstants {
     public static final byte TYPE_WEBRTC_ESTABLISHED   = 12; // Server → Client: WebRTC connection established
     public static final byte TYPE_WEBRTC_FAILED        = 13; // Bidirectional: WebRTC connection failed
 
+    // Rendezvous (设备码汇聚) message types
+    public static final byte TYPE_DEVICE_QUERY     = 14; // 控制端查询被控端信息
+    public static final byte TYPE_DEVICE_QUERY_ACK = 15; // 服务端返回被控端信息
+
     /**
      * 最大消息体长度 (10MB)
      */

@@ -92,10 +92,11 @@ type Client struct {
 	webrtcRecoveryCount atomic.Int64
 
 	// Callbacks
-	OnStateChange    func(old, new State)
-	OnRegisterResult func(success bool, externalPort int, err error)
-	OnDataReceived   func(data []byte)
-	OnError          func(err error)
+	OnStateChange       func(old, new State)
+	OnRegisterResult    func(success bool, externalPort int, err error)
+	OnDataReceived      func(data []byte)
+	OnError             func(err error)
+	OnDeviceQueryResult func(resp *protocol.DeviceQueryResponse)
 }
 
 // NewClient creates a new client
@@ -511,6 +512,8 @@ func (c *Client) handleMessage(msg *protocol.Message) {
 		c.handleWebRTCEstablished(msg)
 	case protocol.TypeWebRTCFailed:
 		c.handleWebRTCFailed(msg)
+	case protocol.TypeDeviceQueryAck:
+		c.handleDeviceQueryAck(msg)
 	default:
 		if c.OnError != nil {
 			c.OnError(fmt.Errorf("unknown message type: %d", msg.Header.Type))
@@ -712,6 +715,41 @@ func (c *Client) handleError(msg *protocol.Message) {
 
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("server error: %s", resp.Message))
+	}
+}
+
+// SendMessage sends an arbitrary protocol message (used for device queries etc.)
+func (c *Client) SendMessage(msg *protocol.Message) error {
+	return c.sendRaw(msg)
+}
+
+// StartReadLoop starts a single read iteration (for one-shot query connections).
+// Returns when the connection is closed or an error occurs.
+func (c *Client) StartReadLoop() error {
+	c.mu.Lock()
+	reader := c.reader
+	c.mu.Unlock()
+	if reader == nil {
+		return fmt.Errorf("not connected")
+	}
+	decoder := protocol.NewDecoder(reader)
+	for {
+		msg, err := decoder.Decode()
+		if err != nil {
+			return err
+		}
+		c.handleMessage(msg)
+	}
+}
+
+func (c *Client) handleDeviceQueryAck(msg *protocol.Message) {
+	resp, err := protocol.ParseDeviceQueryResponse(msg.Body)
+	if err != nil {
+		logger.Error("Failed to parse device query response: %v", err)
+		return
+	}
+	if c.OnDeviceQueryResult != nil {
+		c.OnDeviceQueryResult(resp)
 	}
 }
 

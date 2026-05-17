@@ -322,6 +322,45 @@ func ParseWebRTCConnectionBody(body []byte) (*WebRTCConnectionBody, error) {
 	return &b, nil
 }
 
+// DeviceQueryRequest is the body for TypeDeviceQuery.
+type DeviceQueryRequest struct {
+	DeviceCode string `json:"deviceCode"`
+}
+
+// DeviceQueryResponse is the body for TypeDeviceQueryAck.
+type DeviceQueryResponse struct {
+	Found        bool   `json:"found"`
+	DeviceCode   string `json:"deviceCode,omitempty"`
+	ExternalPort int    `json:"externalPort,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+// NewDeviceQueryMessage creates a device query message.
+func NewDeviceQueryMessage(deviceCode string) (*Message, error) {
+	body, err := json.Marshal(DeviceQueryRequest{DeviceCode: deviceCode})
+	if err != nil {
+		return nil, fmt.Errorf("marshal device query: %w", err)
+	}
+	return &Message{
+		Header: &MessageHeader{
+			Magic:   MagicNumber,
+			Version: Version,
+			Type:    TypeDeviceQuery,
+			Length:  int32(len(body)),
+		},
+		Body: body,
+	}, nil
+}
+
+// ParseDeviceQueryResponse parses a TypeDeviceQueryAck body.
+func ParseDeviceQueryResponse(body []byte) (*DeviceQueryResponse, error) {
+	var resp DeviceQueryResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse device query response: %w", err)
+	}
+	return &resp, nil
+}
+
 // NewCloseConnectionMessage creates a close-connection notification.
 // Body format: same binary framing — connectionId with zero-length payload.
 func NewCloseConnectionMessage(connectionID string) *Message {

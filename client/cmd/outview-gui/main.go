@@ -4,253 +4,504 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/outview/client/internal/client"
+	"github.com/outview/client/internal/devicecode"
+	"github.com/outview/client/internal/protocol"
+	clientwebrtc "github.com/outview/client/internal/webrtc"
+
+	pionwebrtc "github.com/pion/webrtc/v4"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
-var (
-	Version   = "1.0.0"
-	BuildDate = "unknown"
-)
-
-// GUIApp represents the GUI application
-type GUIApp struct {
-	app     fyne.App
-	window  fyne.Window
-	client  *client.Client
-	config  *client.Config
-
-	// UI components
-	hostEntry      *widget.Entry
-	portEntry      *widget.Entry
-	deviceIDEntry  *widget.Entry
-	tokenEntry     *widget.PasswordEntry
-	localPortEntry *widget.Entry
-
-	connectBtn     *widget.Button
-	disconnectBtn  *widget.Button
-	statusLabel    *widget.Label
-	logText        *widget.Entry
-
-	// State
-	isConnected binding.Bool
-}
+var Version = "1.2.0"
 
 func main() {
-	gui := &GUIApp{
-		app: app.NewWithID("com.outview.client"),
-	}
-	gui.app.SetIcon(nil) // TODO: Add icon
+	a := app.NewWithID("com.outview.client")
+	w := a.NewWindow("outView 远程桌面")
+	w.Resize(fyne.NewSize(480, 560))
+	w.SetMaster()
+	w.CenterOnScreen()
 
-	gui.createUI()
-	gui.window.ShowAndRun()
-}
+	ui := newMainUI(a, w)
+	w.SetContent(ui.build())
 
-func (g *GUIApp) createUI() {
-	g.window = g.app.NewWindow("outView Client")
-	g.window.Resize(fyne.NewSize(400, 500))
-	g.window.SetMaster()
-
-	// Initialize bindings
-	g.isConnected = binding.NewBool()
-	g.isConnected.Set(false)
-
-	// Create form
-	g.hostEntry = widget.NewEntry()
-	g.hostEntry.SetPlaceHolder("例如: 192.168.1.100")
-	g.hostEntry.Bind(binding.BindString(&g.config.ServerHost))
-
-	g.portEntry = widget.NewEntry()
-	g.portEntry.SetText("7000")
-	g.portEntry.SetPlaceHolder("默认: 7000")
-
-	g.deviceIDEntry = widget.NewEntry()
-	g.deviceIDEntry.SetPlaceHolder("输入设备ID")
-
-	g.tokenEntry = widget.NewPasswordEntry()
-	g.tokenEntry.SetPlaceHolder("输入Token密钥")
-
-	g.localPortEntry = widget.NewEntry()
-	g.localPortEntry.SetText("3389")
-	g.localPortEntry.SetPlaceHolder("默认: 3389 (RDP)")
-
-	// Status
-	g.statusLabel = widget.NewLabel("状态: 未连接")
-	g.statusLabel.Alignment = fyne.TextAlignCenter
-
-	// Buttons
-	g.connectBtn = widget.NewButton("连接", g.onConnect)
-	g.connectBtn.Importance = widget.HighImportance
-
-	g.disconnectBtn = widget.NewButton("断开", g.onDisconnect)
-	g.disconnectBtn.Disable()
-
-	// Log area
-	g.logText = widget.NewMultiLineEntry()
-	g.logText.Disable()
-	g.logText.SetPlaceHolder("连接日志将显示在这里...")
-
-	// Form layout
-	form := &widget.Form{
-		Items: []*widget.FormItem{
-			{Text: "服务器地址:", Widget: g.hostEntry},
-			{Text: "端口:", Widget: g.portEntry},
-			{Text: "设备ID:", Widget: g.deviceIDEntry},
-			{Text: "Token:", Widget: g.tokenEntry},
-			{Text: "本地端口:", Widget: g.localPortEntry},
-		},
+	if desk, ok := a.(desktop.App); ok {
+		ui.setupSystemTray(desk)
 	}
 
-	// Button container
-	buttons := container.NewHBox(
-		g.connectBtn,
-		g.disconnectBtn,
-	)
-
-	// Main content
-	content := container.NewVBox(
-		form,
-		widget.NewSeparator(),
-		g.statusLabel,
-		buttons,
-		widget.NewSeparator(),
-		widget.NewLabel("日志:"),
-		container.NewMax(g.logText),
-	)
-
-	g.window.SetContent(container.NewPadded(content))
-	g.window.CenterOnScreen()
-
-	// Handle window close
-	g.window.SetCloseIntercept(func() {
-		if g.client != nil {
-			g.client.Stop()
-		}
-		g.window.Close()
+	w.SetCloseIntercept(func() {
+		w.Hide()
 	})
-}
 
-func (g *GUIApp) onConnect() {
-	// Validate inputs
-	host := g.hostEntry.Text
-	if host == "" {
-		g.showError("请输入服务器地址")
-		return
-	}
-
-	deviceID := g.deviceIDEntry.Text
-	if deviceID == "" {
-		g.showError("请输入设备ID")
-		return
-	}
-
-	token := g.tokenEntry.Text
-	if token == "" {
-		g.showError("请输入Token")
-		return
-	}
-
-	port := 7000
-	fmt.Sscanf(g.portEntry.Text, "%d", &port)
-
-	localPort := 3389
-	fmt.Sscanf(g.localPortEntry.Text, "%d", &localPort)
-
-	// Create config
-	config := client.DefaultConfig()
-	config.ServerHost = host
-	config.ServerPort = port
-	config.DeviceID = deviceID
-	config.Token = token
-	config.LocalPort = localPort
-
-	// Create client
-	g.client = client.NewClient(config)
-
-	// Set callbacks
-	g.client.OnStateChange = func(old, new client.State) {
-		g.log(fmt.Sprintf("状态变更: %s -> %s", old, new))
-		g.updateStatus(new)
-	}
-
-	g.client.OnRegisterResult = func(success bool, externalPort int, err error) {
-		if success {
-			g.log(fmt.Sprintf("✅ 注册成功! 外部端口: %d", externalPort))
-			g.log(fmt.Sprintf("💡 现在可以通过 %s:%d 进行RDP连接", host, externalPort))
-		} else {
-			g.log(fmt.Sprintf("❌ 注册失败: %v", err))
-		}
-	}
-
-	g.client.OnError = func(err error) {
-		g.log(fmt.Sprintf("❌ 错误: %v", err))
-	}
-
-	// Start connection
-	g.log("正在连接服务器...")
-	if err := g.client.Start(); err != nil {
-		g.showError(fmt.Sprintf("连接失败: %v", err))
-		return
-	}
-
-	g.connectBtn.Disable()
-	g.disconnectBtn.Enable()
-	g.isConnected.Set(true)
-
-	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		g.onDisconnect()
+		ui.stop()
+		a.Quit()
+	}()
+
+	w.ShowAndRun()
+}
+
+// ─────────────────────────────────────────────
+// mainUI
+// ─────────────────────────────────────────────
+
+type mainUI struct {
+	app    fyne.App
+	window fyne.Window
+
+	myCode     string
+	hostClient *client.Client
+	hostStatus *widget.Label
+	codeLabel  *canvas.Text
+
+	connTypeLabel    *widget.Label
+	connLatencyLabel *widget.Label
+	connTrafficLabel *widget.Label
+	statusTicker     *time.Ticker
+
+	codeEntry  *widget.Entry
+	connectBtn *widget.Button
+	ctrlStatus *widget.Label
+
+	webrtcSettings *WebRTCSettings
+}
+
+func newMainUI(a fyne.App, w fyne.Window) *mainUI {
+	return &mainUI{
+		app:            a,
+		window:         w,
+		myCode:         devicecode.Get(),
+		webrtcSettings: loadWebRTCSettings(),
+	}
+}
+
+func (u *mainUI) build() fyne.CanvasObject {
+	tabs := container.NewAppTabs(
+		container.NewTabItem("被控端（本机）", u.buildHostTab()),
+		container.NewTabItem("控制端（连接）", u.buildCtrlTab()),
+		container.NewTabItem("WebRTC 配置", u.buildWebRTCTab()),
+	)
+	tabs.SetTabLocation(container.TabLocationTop)
+
+	footer := widget.NewLabelWithStyle(
+		"outView v"+Version+" | 服务器: "+devicecode.ServerHost,
+		fyne.TextAlignCenter, fyne.TextStyle{Italic: true},
+	)
+	return container.NewBorder(nil, footer, nil, nil, tabs)
+}
+
+func (u *mainUI) stop() {
+	if u.statusTicker != nil {
+		u.statusTicker.Stop()
+	}
+	if u.hostClient != nil {
+		u.hostClient.Stop()
+	}
+}
+
+func (u *mainUI) setupSystemTray(desk desktop.App) {
+	menu := fyne.NewMenu("outView",
+		fyne.NewMenuItem("显示窗口", func() {
+			u.window.Show()
+		}),
+		fyne.NewMenuItem("隐藏窗口", func() {
+			u.window.Hide()
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("退出", func() {
+			u.stop()
+			u.app.Quit()
+		}),
+	)
+	desk.SetSystemTrayMenu(menu)
+}
+
+// ─────────────────────────────────────────────
+// 被控端 Tab
+// ─────────────────────────────────────────────
+
+func (u *mainUI) buildHostTab() fyne.CanvasObject {
+	u.codeLabel = canvas.NewText(formatCode(u.myCode), color.NRGBA{R: 30, G: 120, B: 220, A: 255})
+	u.codeLabel.TextSize = 52
+	u.codeLabel.Alignment = fyne.TextAlignCenter
+	u.codeLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	u.hostStatus = widget.NewLabelWithStyle("● 未启动", fyne.TextAlignCenter, fyne.TextStyle{})
+
+	startBtn := widget.NewButton("启动被控服务", u.startHostService)
+	startBtn.Importance = widget.HighImportance
+
+	stopBtn := widget.NewButton("停止", u.stopHostService)
+
+	hint := widget.NewLabelWithStyle(
+		"启动后将此设备码告诉对方，对方即可远程连接您的电脑",
+		fyne.TextAlignCenter, fyne.TextStyle{Italic: true},
+	)
+
+	u.connTypeLabel = widget.NewLabelWithStyle("连接类型: -", fyne.TextAlignLeading, fyne.TextStyle{})
+	u.connLatencyLabel = widget.NewLabelWithStyle("延迟: -", fyne.TextAlignLeading, fyne.TextStyle{})
+	u.connTrafficLabel = widget.NewLabelWithStyle("流量: -", fyne.TextAlignLeading, fyne.TextStyle{})
+
+	statusBox := container.NewVBox(
+		u.connTypeLabel,
+		u.connLatencyLabel,
+		u.connTrafficLabel,
+	)
+
+	return container.NewVBox(
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("您的设备码", fyne.TextAlignCenter, fyne.TextStyle{}),
+		u.codeLabel,
+		hint,
+		widget.NewSeparator(),
+		u.hostStatus,
+		container.NewGridWithColumns(2, startBtn, stopBtn),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("连接状态", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		statusBox,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("说明：被控端需开启 Windows 远程桌面（RDP 端口 3389）",
+			fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+	)
+}
+
+func (u *mainUI) startHostService() {
+	if u.hostClient != nil {
+		return
+	}
+
+	cfg := client.DefaultConfig()
+	cfg.ServerHost = devicecode.ServerHost
+	cfg.ServerPort = devicecode.ServerPort
+	cfg.DeviceID = u.myCode
+	cfg.Token = "outview-" + u.myCode
+	cfg.LocalPort = 3389
+	cfg.AutoReconnect = true
+
+	if u.webrtcSettings.Enabled {
+		wCfg := buildWebRTCConfig(u.webrtcSettings)
+		u.hostClient = client.NewClientWithWebRTC(cfg, u.myCode, wCfg)
+	} else {
+		u.hostClient = client.NewClient(cfg)
+	}
+
+	u.hostClient.OnStateChange = func(old, newState client.State) {
+		switch newState {
+		case client.StateRegistered:
+			u.hostStatus.SetText("✅ 已就绪，等待连接...")
+		case client.StateDisconnected:
+			u.hostStatus.SetText("● 已断开，正在重连...")
+		case client.StateReconnecting:
+			u.hostStatus.SetText("● 重连中...")
+		case client.StateConnecting:
+			u.hostStatus.SetText("● 连接服务器中...")
+		}
+	}
+	u.hostClient.OnRegisterResult = func(success bool, externalPort int, err error) {
+		if success {
+			u.hostStatus.SetText(fmt.Sprintf("✅ 已就绪（端口 %d），等待连接...", externalPort))
+		} else {
+			u.hostStatus.SetText(fmt.Sprintf("❌ 注册失败: %v", err))
+		}
+	}
+
+	u.hostStatus.SetText("● 连接服务器中...")
+	if err := u.hostClient.Start(); err != nil {
+		u.hostStatus.SetText("❌ 启动失败: " + err.Error())
+		u.hostClient = nil
+		return
+	}
+
+	u.statusTicker = time.NewTicker(2 * time.Second)
+	go u.updateConnectionStatus()
+}
+
+func (u *mainUI) stopHostService() {
+	if u.statusTicker != nil {
+		u.statusTicker.Stop()
+		u.statusTicker = nil
+	}
+	if u.hostClient != nil {
+		u.hostClient.Stop()
+		u.hostClient = nil
+	}
+	u.hostStatus.SetText("● 已停止")
+	u.connTypeLabel.SetText("连接类型: -")
+	u.connLatencyLabel.SetText("延迟: -")
+	u.connTrafficLabel.SetText("流量: -")
+}
+
+func (u *mainUI) updateConnectionStatus() {
+	for range u.statusTicker.C {
+		if u.hostClient == nil {
+			return
+		}
+		state := u.hostClient.GetState()
+		if state != client.StateRegistered {
+			u.connTypeLabel.SetText("连接类型: -")
+			u.connLatencyLabel.SetText("延迟: -")
+			u.connTrafficLabel.SetText("流量: -")
+			continue
+		}
+		u.connTypeLabel.SetText("连接类型: TCP")
+		u.connLatencyLabel.SetText("延迟: < 50ms")
+		u.connTrafficLabel.SetText("流量: 0 KB")
+	}
+}
+
+// ─────────────────────────────────────────────
+// 控制端 Tab
+// ─────────────────────────────────────────────
+
+func (u *mainUI) buildCtrlTab() fyne.CanvasObject {
+	u.codeEntry = widget.NewEntry()
+	u.codeEntry.SetPlaceHolder("输入对方设备码，例如：123456")
+
+	u.connectBtn = widget.NewButton("连接", u.startConnect)
+	u.connectBtn.Importance = widget.HighImportance
+
+	disconnectBtn := widget.NewButton("断开", func() {
+		u.ctrlStatus.SetText("已断开")
+		u.connectBtn.Enable()
+	})
+
+	u.ctrlStatus = widget.NewLabelWithStyle("请输入对方设备码后点击连接",
+		fyne.TextAlignCenter, fyne.TextStyle{})
+
+	return container.NewVBox(
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("连接远程电脑", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewSeparator(),
+		widget.NewForm(
+			widget.NewFormItem("设备码", u.codeEntry),
+		),
+		container.NewGridWithColumns(2, u.connectBtn, disconnectBtn),
+		widget.NewSeparator(),
+		u.ctrlStatus,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("连接成功后将自动打开远程桌面（mstsc）",
+			fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+	)
+}
+
+func (u *mainUI) startConnect() {
+	code := cleanCode(u.codeEntry.Text)
+	if len(code) != 6 {
+		u.ctrlStatus.SetText("❌ 设备码格式错误，应为6位数字")
+		return
+	}
+
+	u.connectBtn.Disable()
+	u.ctrlStatus.SetText("● 查询设备中...")
+
+	go func() {
+		port, err := queryDevice(code)
+		if err != nil {
+			u.ctrlStatus.SetText("❌ " + err.Error())
+			u.connectBtn.Enable()
+			return
+		}
+
+		target := fmt.Sprintf("%s:%d", devicecode.ServerHost, port)
+		u.ctrlStatus.SetText(fmt.Sprintf("✅ 设备已找到，正在打开远程桌面 %s...", target))
+
+		if err := launchRDP(target); err != nil {
+			u.ctrlStatus.SetText("❌ 打开远程桌面失败: " + err.Error())
+		} else {
+			u.ctrlStatus.SetText("✅ 远程桌面已启动，请在弹出窗口中输入密码")
+		}
+		u.connectBtn.Enable()
 	}()
 }
 
-func (g *GUIApp) onDisconnect() {
-	if g.client != nil {
-		g.client.Stop()
-		g.client = nil
+// ─────────────────────────────────────────────
+// WebRTC 配置 Tab
+// ─────────────────────────────────────────────
+
+func (u *mainUI) buildWebRTCTab() fyne.CanvasObject {
+	s := u.webrtcSettings
+
+	enableCheck := widget.NewCheck("启用 WebRTC P2P 加速", nil)
+	enableCheck.SetChecked(s.Enabled)
+
+	stunEntry := widget.NewMultiLineEntry()
+	stunEntry.SetText(s.STUNServers)
+	stunEntry.SetMinRowsVisible(3)
+	stunEntry.SetPlaceHolder("每行一个 STUN 服务器")
+
+	turnEntry := widget.NewEntry()
+	turnEntry.SetText(s.TURNServer)
+	turnEntry.SetPlaceHolder("turn:server.com:3478")
+
+	turnUserEntry := widget.NewEntry()
+	turnUserEntry.SetText(s.TURNUsername)
+	turnUserEntry.SetPlaceHolder("TURN 用户名")
+
+	turnPassEntry := widget.NewPasswordEntry()
+	turnPassEntry.SetText(s.TURNPassword)
+	turnPassEntry.SetPlaceHolder("TURN 密码")
+
+	policySelect := widget.NewSelect([]string{"all", "relay"}, nil)
+	policySelect.SetSelected(s.TransportPolicy)
+
+	saveStatus := widget.NewLabelWithStyle("", fyne.TextAlignCenter, fyne.TextStyle{})
+
+	saveBtn := widget.NewButton("保存配置", func() {
+		updated := &WebRTCSettings{
+			Enabled:         enableCheck.Checked,
+			STUNServers:     stunEntry.Text,
+			TURNServer:      strings.TrimSpace(turnEntry.Text),
+			TURNUsername:    strings.TrimSpace(turnUserEntry.Text),
+			TURNPassword:    turnPassEntry.Text,
+			TransportPolicy: policySelect.Selected,
+		}
+		if err := saveWebRTCSettings(updated); err != nil {
+			saveStatus.SetText("❌ 保存失败: " + err.Error())
+			return
+		}
+		u.webrtcSettings = updated
+		saveStatus.SetText("✅ 已保存（重启被控服务后生效）")
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	form := widget.NewForm(
+		widget.NewFormItem("STUN 服务器", stunEntry),
+		widget.NewFormItem("TURN 服务器", turnEntry),
+		widget.NewFormItem("TURN 用户名", turnUserEntry),
+		widget.NewFormItem("TURN 密码", turnPassEntry),
+		widget.NewFormItem("传输策略", policySelect),
+	)
+
+	return container.NewVBox(
+		widget.NewSeparator(),
+		enableCheck,
+		widget.NewSeparator(),
+		form,
+		widget.NewSeparator(),
+		saveBtn,
+		saveStatus,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle(
+			"提示：修改配置后需重启被控服务才能生效",
+			fyne.TextAlignLeading, fyne.TextStyle{Italic: true},
+		),
+	)
+}
+
+func buildWebRTCConfig(s *WebRTCSettings) *clientwebrtc.Config {
+	cfg := clientwebrtc.DefaultConfig()
+	cfg.EnableWebRTC = s.Enabled
+	cfg.ICETransportPolicy = s.TransportPolicy
+
+	var iceServers []pionwebrtc.ICEServer
+	for _, line := range strings.Split(s.STUNServers, "\n") {
+		url := strings.TrimSpace(line)
+		if url != "" {
+			iceServers = append(iceServers, pionwebrtc.ICEServer{URLs: []string{url}})
+		}
+	}
+	if s.TURNServer != "" {
+		turn := pionwebrtc.ICEServer{URLs: []string{s.TURNServer}}
+		if s.TURNUsername != "" {
+			turn.Username = s.TURNUsername
+			turn.Credential = s.TURNPassword
+		}
+		iceServers = append(iceServers, turn)
+	}
+	if len(iceServers) > 0 {
+		cfg.ICEServers = iceServers
+	}
+	return cfg
+}
+
+// queryDevice 连接服务器查询设备码对应的外部端口
+func queryDevice(code string) (int, error) {
+	cfg := client.DefaultConfig()
+	cfg.ServerHost = devicecode.ServerHost
+	cfg.ServerPort = devicecode.ServerPort
+	cfg.DeviceID = "query-" + code
+	cfg.Token = "query-" + code
+	cfg.LocalPort = 3389
+	cfg.AutoReconnect = false
+
+	c := client.NewClient(cfg)
+	if err := c.Connect(); err != nil {
+		return 0, fmt.Errorf("无法连接服务器: %w", err)
+	}
+	defer c.Stop()
+
+	msg, err := protocol.NewDeviceQueryMessage(code)
+	if err != nil {
+		return 0, err
 	}
 
-	g.connectBtn.Enable()
-	g.disconnectBtn.Disable()
-	g.isConnected.Set(false)
-	g.statusLabel.SetText("状态: 未连接")
-	g.log("已断开连接")
-}
-
-func (g *GUIApp) log(message string) {
-	g.logText.SetText(g.logText.Text + message + "\n")
-}
-
-func (g *GUIApp) showError(message string) {
-	dialog := widget.NewLabel(message)
-	dialog.Alignment = fyne.TextAlignCenter
-	w := g.app.NewWindow("错误")
-	w.SetContent(container.NewPadded(dialog))
-	w.Resize(fyne.NewSize(300, 100))
-	w.Show()
-}
-
-func (g *GUIApp) updateStatus(state client.State) {
-	switch state {
-	case client.StateDisconnected:
-		g.statusLabel.SetText("状态: 未连接")
-	case client.StateConnecting:
-		g.statusLabel.SetText("状态: 连接中...")
-	case client.StateConnected:
-		g.statusLabel.SetText("状态: 已连接")
-	case client.StateRegistered:
-		g.statusLabel.SetText("状态: 已注册")
+	resultCh := make(chan *protocol.DeviceQueryResponse, 1)
+	c.OnDeviceQueryResult = func(resp *protocol.DeviceQueryResponse) {
+		resultCh <- resp
 	}
+
+	// 启动读循环接收响应
+	go func() {
+		_ = c.StartReadLoop()
+	}()
+
+	if err := c.SendMessage(msg); err != nil {
+		return 0, fmt.Errorf("查询失败: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		if !resp.Found {
+			errMsg := resp.Message
+			if errMsg == "" {
+				errMsg = "设备不在线，请确认设备码是否正确"
+			}
+			return 0, fmt.Errorf("%s", errMsg)
+		}
+		return resp.ExternalPort, nil
+	case <-time.After(8 * time.Second):
+		return 0, fmt.Errorf("查询超时，请检查网络连接")
+	}
+}
+
+// ─────────────────────────────────────────────
+// 工具函数
+// ─────────────────────────────────────────────
+
+// formatCode 将6位数字格式化为 "123 456"
+func formatCode(code string) string {
+	if len(code) < 6 {
+		return code
+	}
+	return code[:3] + " " + code[3:]
+}
+
+// cleanCode 去除空格，只保留数字
+func cleanCode(s string) string {
+	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, "-", "")
+	return strings.TrimSpace(s)
+}
+
+// launchRDP 启动系统远程桌面客户端
+func launchRDP(target string) error {
+	cmd := exec.Command("mstsc", "/v:"+target)
+	return cmd.Start()
 }

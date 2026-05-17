@@ -30,6 +30,10 @@ const (
 	TypeWebRTCICEComplete  byte = 11 // Bidirectional: ICE gathering complete
 	TypeWebRTCEstablished  byte = 12 // Server → Client: WebRTC connection established
 	TypeWebRTCFailed       byte = 13 // Bidirectional: WebRTC connection failed
+
+	// Rendezvous (设备码汇聚) message types
+	TypeDeviceQuery    byte = 14 // 控制端查询被控端信息
+	TypeDeviceQueryAck byte = 15 // 服务端返回被控端信息
 )
 
 // Default heartbeat interval (30 seconds)

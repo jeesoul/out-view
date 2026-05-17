@@ -11,12 +11,25 @@ mkdir -p "${RELEASE_DIR}/client"/{windows,linux,macos}
 mkdir -p "${RELEASE_DIR}/webrtc-sidecar"/{windows,linux,macos}
 
 # Build Go client for all platforms
+# Windows: GUI 版本（需要 CGO + MinGW）
+# Linux/macOS: CLI 版本（无 CGO 依赖）
 echo "Building Go client..."
 cd client
-GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/windows/outview-client.exe" ./cmd/outview-client
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/linux/outview-client" ./cmd/outview-client
-GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/macos/outview-client-intel" ./cmd/outview-client
-GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/macos/outview-client-arm" ./cmd/outview-client
+# Windows GUI（CGO_ENABLED=1，需要 MinGW）
+CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build \
+  -ldflags="-s -w -H windowsgui -X main.Version=${VERSION}" \
+  -o "../${RELEASE_DIR}/client/windows/outview-client.exe" ./cmd/outview-gui \
+  || {
+    echo "GUI build failed, falling back to CLI..."
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+      -ldflags="-s -w -X main.Version=${VERSION}" \
+      -o "../${RELEASE_DIR}/client/windows/outview-client.exe" ./cmd/outview-client
+  }
+# Linux CLI
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/linux/outview-client" ./cmd/outview-client
+# macOS CLI
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/macos/outview-client-intel" ./cmd/outview-client
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "../${RELEASE_DIR}/client/macos/outview-client-arm" ./cmd/outview-client
 cd ..
 
 # Build WebRTC sidecar for all platforms
