@@ -8,7 +8,6 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
@@ -16,7 +15,7 @@ import java.net.InetSocketAddress;
 
 /**
  * Netty 服务端
- * 负责启动控制端口，并将 workerGroup 暴露为 Bean 供 DataPortService 复用
+ * 负责启动控制端口，workerGroup 由 NettyThreadPoolConfig 统一管理
  */
 @Slf4j
 @Component
@@ -24,25 +23,16 @@ public class NettyServer implements CommandLineRunner {
 
     private final OutViewProperties properties;
     private final ControlChannelInitializer controlChannelInitializer;
+    private final EventLoopGroup sharedWorkerGroup;
 
     private EventLoopGroup bossGroup;
-    private EventLoopGroup workerGroup;
 
-    public NettyServer(OutViewProperties properties, ControlChannelInitializer controlChannelInitializer) {
+    public NettyServer(OutViewProperties properties,
+                       ControlChannelInitializer controlChannelInitializer,
+                       EventLoopGroup sharedWorkerGroup) {
         this.properties = properties;
         this.controlChannelInitializer = controlChannelInitializer;
-    }
-
-    /**
-     * 将 workerGroup 暴露为 Spring Bean，供 DataPortService 注入复用，
-     * 避免为数据端口重复创建线程池。
-     */
-    @Bean
-    public EventLoopGroup sharedWorkerGroup() {
-        if (workerGroup == null) {
-            workerGroup = new NioEventLoopGroup();
-        }
-        return workerGroup;
+        this.sharedWorkerGroup = sharedWorkerGroup;
     }
 
     @Override
@@ -52,13 +42,10 @@ public class NettyServer implements CommandLineRunner {
 
     private void startControlServer() {
         bossGroup = new NioEventLoopGroup(1);
-        if (workerGroup == null) {
-            workerGroup = new NioEventLoopGroup();
-        }
 
         try {
             ServerBootstrap bootstrap = new ServerBootstrap();
-            bootstrap.group(bossGroup, workerGroup)
+            bootstrap.group(bossGroup, sharedWorkerGroup)
                     .channel(NioServerSocketChannel.class)
                     .option(ChannelOption.SO_BACKLOG, 128)
                     .childOption(ChannelOption.SO_KEEPALIVE, true)
@@ -80,9 +67,7 @@ public class NettyServer implements CommandLineRunner {
         if (bossGroup != null) {
             bossGroup.shutdownGracefully();
         }
-        if (workerGroup != null) {
-            workerGroup.shutdownGracefully();
-        }
         log.info("Netty server shutdown completed");
     }
 }
+
