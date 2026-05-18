@@ -52,14 +52,11 @@ cp target/outview-*.jar "${RELEASE_DIR}/outview-server.jar"
 echo "Copying configuration files..."
 cp src/main/resources/application.yml "${RELEASE_DIR}/"
 
-# Copy documentation
+# Copy documentation (user-facing only)
 echo "Copying documentation..."
 cp docs/USER_MANUAL.md "${RELEASE_DIR}/"
-cp docs/DEVELOPER_GUIDE.md "${RELEASE_DIR}/"
-cp docs/PERFORMANCE_BENCHMARK.md "${RELEASE_DIR}/"
 cp docs/webrtc-user-guide.md "${RELEASE_DIR}/"
 cp docs/webrtc-troubleshooting.md "${RELEASE_DIR}/"
-cp docs/gray-release-plan.md "${RELEASE_DIR}/"
 cp README.md "${RELEASE_DIR}/"
 cp LICENSE "${RELEASE_DIR}/"
 
