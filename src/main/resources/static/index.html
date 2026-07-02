@@ -157,9 +157,15 @@
 </head>
 <body>
     <div class="header">
-        <div class="container">
-            <h1>outView 管理后台</h1>
-            <p>远程桌面内网穿透服务管理系统</p>
+        <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h1>outView 管理后台</h1>
+                <p>远程桌面内网穿透服务管理系统</p>
+            </div>
+            <div>
+                <span id="currentUser" style="margin-right:12px;opacity:0.9;font-size:14px;"></span>
+                <button class="btn" style="background:rgba(255,255,255,0.2);color:white;" onclick="logout()">退出登录</button>
+            </div>
         </div>
     </div>
 
@@ -221,6 +227,29 @@
             </div>
         </div>
 
+        <!-- 封禁设备 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>封禁设备</h2>
+                <span id="bannedCount" style="font-size:13px;color:#999;"></span>
+            </div>
+            <div class="card-body">
+                <table id="bannedTable">
+                    <thead>
+                        <tr>
+                            <th>设备ID</th>
+                            <th>封禁时间</th>
+                            <th>操作人</th>
+                            <th>原因</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bannedBody"></tbody>
+                </table>
+                <div id="bannedEmpty" class="empty" style="display:none;">暂无封禁设备</div>
+            </div>
+        </div>
+
         <!-- 端口映射 -->
         <div class="card">
             <div class="card-header">
@@ -234,6 +263,7 @@
                             <th>设备ID</th>
                             <th>目标端口</th>
                             <th>创建时间</th>
+                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="mappingBody"></tbody>
@@ -244,6 +274,43 @@
 
     <script>
         const API_BASE = '';
+
+        // 鉴权：浏览器 Basic Auth 会话由浏览器自动维护
+        // 未登录时 Spring Security 会返回 401，浏览器弹出 Basic Auth 对话框
+        // 或者通过 login.html 登录后 sessionStorage 存储凭据
+
+        function authHeaders() {
+            const auth = sessionStorage.getItem('auth');
+            return auth ? { 'Authorization': 'Basic ' + auth } : {};
+        }
+
+        async function apiFetch(url, options) {
+            const res = await fetch(url, { ...options, headers: { ...authHeaders(), ...(options && options.headers) } });
+            if (res.status === 401) {
+                window.location.href = '/login.html';
+                return null;
+            }
+            return res;
+        }
+
+        function logout() {
+            sessionStorage.removeItem('auth');
+            // 清除浏览器 Basic Auth 缓存（发送错误凭据触发清除）
+            fetch('/api/devices', { headers: { 'Authorization': 'Basic ' + btoa('logout:logout') } })
+                .finally(() => { window.location.href = '/login.html'; });
+        }
+
+        // 显示当前用户名
+        (function() {
+            const auth = sessionStorage.getItem('auth');
+            if (auth) {
+                try {
+                    const decoded = atob(auth);
+                    const username = decoded.split(':')[0];
+                    document.getElementById('currentUser').textContent = '👤 ' + username;
+                } catch(e) {}
+            }
+        })();
 
         // 加载设备列表
         async function loadDevices() {
@@ -257,10 +324,10 @@
             empty.style.display = 'none';
 
             try {
-                const res = await fetch(API_BASE + '/api/devices');
+                const res = await apiFetch(API_BASE + '/api/devices');
+                if (!res) return;
                 const data = await res.json();
 
-                // 更新统计
                 document.getElementById('onlineCount').textContent = data.online || 0;
                 document.getElementById('totalCount').textContent = data.total || 0;
 
@@ -274,6 +341,7 @@
                             <td>${d.lastHeartbeat ? new Date(d.lastHeartbeat).toLocaleString() : '-'}</td>
                             <td>
                                 <button class="btn btn-danger btn-sm" onclick="disconnectDevice('${d.deviceId}')">断开</button>
+                                <button class="btn btn-sm" style="background:#dc3545;color:white;margin-left:4px;" onclick="banDevice('${d.deviceId}')">彻底封禁</button>
                             </td>
                         </tr>
                     `).join('');
@@ -293,7 +361,8 @@
         // 加载端口映射
         async function loadMappings() {
             try {
-                const res = await fetch(API_BASE + '/api/devices/mappings');
+                const res = await apiFetch(API_BASE + '/api/devices/mappings');
+                if (!res) return;
                 const data = await res.json();
 
                 document.getElementById('mappingCount').textContent = data.total || 0;
@@ -302,10 +371,13 @@
                 if (data.mappings && data.mappings.length > 0) {
                     body.innerHTML = data.mappings.map(m => `
                         <tr>
-                            <td><code>${m.externalPort}</code></td>
+                            <td><code id="port-${m.deviceId}">${m.externalPort}</code></td>
                             <td>${m.deviceId}</td>
                             <td>${m.targetPort}</td>
                             <td>${m.createTime ? new Date(m.createTime).toLocaleString() : '-'}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="editMapping('${m.deviceId}', ${m.externalPort})">修改端口</button>
+                            </td>
                         </tr>
                     `).join('');
                 }
@@ -314,10 +386,42 @@
             }
         }
 
+        // 修改端口映射
+        async function editMapping(deviceId, currentPort) {
+            const input = prompt('请输入新的对外端口（当前：' + currentPort + '）：', currentPort);
+            if (input === null) return;
+            const newPort = parseInt(input, 10);
+            if (isNaN(newPort) || newPort < 1 || newPort > 65535) {
+                alert('端口号无效，请输入 1-65535 之间的整数');
+                return;
+            }
+            if (newPort === currentPort) return;
+
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/mappings/' + deviceId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ externalPort: newPort })
+                });
+                if (!res) return;
+                const data = await res.json();
+                if (data.success) {
+                    alert('端口已更新：' + data.oldPort + ' → ' + data.newPort);
+                    loadMappings();
+                    loadDevices();
+                } else {
+                    alert('更新失败：' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
         // 生成 Token
         async function generateToken() {
             try {
-                const res = await fetch(API_BASE + '/api/tokens', { method: 'POST' });
+                const res = await apiFetch(API_BASE + '/api/tokens', { method: 'POST' });
+                if (!res) return;
                 const data = await res.json();
 
                 if (data.success) {
@@ -332,10 +436,10 @@
 
         // 断开设备
         async function disconnectDevice(deviceId) {
-            if (!confirm('确定要断开设备 ' + deviceId + ' 吗？')) return;
+            if (!confirm('确定要断开设备 ' + deviceId + ' 吗？（设备可以重新连接）')) return;
 
             try {
-                await fetch(API_BASE + '/api/devices/' + deviceId, { method: 'DELETE' });
+                await apiFetch(API_BASE + '/api/devices/' + deviceId, { method: 'DELETE' });
                 loadDevices();
                 loadMappings();
             } catch (e) {
@@ -343,14 +447,86 @@
             }
         }
 
+        // 彻底封禁设备
+        async function banDevice(deviceId) {
+            const reason = prompt('封禁原因（可留空）：', '管理员封禁');
+            if (reason === null) return; // 取消
+            if (!confirm('确定要彻底封禁设备 ' + deviceId + ' 吗？\n封禁后该设备无法重新连接，需管理员手动解封。')) return;
+
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/' + deviceId + '/ban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || '管理员封禁' })
+                });
+                if (!res) return;
+                loadDevices();
+                loadMappings();
+                loadBanned();
+                alert('设备 ' + deviceId + ' 已封禁');
+            } catch (e) {
+                alert('封禁失败: ' + e.message);
+            }
+        }
+
+        // 解封设备
+        async function unbanDevice(deviceId) {
+            if (!confirm('确定要解封设备 ' + deviceId + ' 吗？\n解封后该设备可以重新连接。')) return;
+
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/' + deviceId + '/ban', { method: 'DELETE' });
+                if (!res) return;
+                loadBanned();
+                alert('设备 ' + deviceId + ' 已解封');
+            } catch (e) {
+                alert('解封失败: ' + e.message);
+            }
+        }
+
+        // 加载封禁列表
+        async function loadBanned() {
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/banned');
+                if (!res) return;
+                const data = await res.json();
+
+                const count = data.total || 0;
+                document.getElementById('bannedCount').textContent = count > 0 ? '共 ' + count + ' 台' : '';
+
+                const body = document.getElementById('bannedBody');
+                const empty = document.getElementById('bannedEmpty');
+                if (data.banned && data.banned.length > 0) {
+                    body.innerHTML = data.banned.map(b => `
+                        <tr>
+                            <td><code>${b.deviceId}</code></td>
+                            <td>${b.bannedAt ? new Date(b.bannedAt).toLocaleString() : '-'}</td>
+                            <td>${b.bannedBy || '-'}</td>
+                            <td>${b.reason || '-'}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="unbanDevice('${b.deviceId}')">解封</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                    empty.style.display = 'none';
+                } else {
+                    body.innerHTML = '';
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Failed to load banned:', e);
+            }
+        }
+
         // 初始化
         loadDevices();
         loadMappings();
+        loadBanned();
 
         // 自动刷新
         setInterval(() => {
             loadDevices();
             loadMappings();
+            loadBanned();
         }, 10000);
     </script>
 </body>

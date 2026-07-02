@@ -13,9 +13,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/java-8%2B-orange.svg" alt="Java">
-  <img src="https://img.shields.io/badge/go-1.21%2B-00ADD8.svg" alt="Go">
+  <img src="https://img.shields.io/badge/go-1.24%2B-00ADD8.svg" alt="Go">
+  <img src="https://img.shields.io/badge/webrtc-pion%20v4-purple.svg" alt="WebRTC">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
 
@@ -29,9 +30,60 @@
 
 - 🎯 **零配置启动** - 开箱即用，5分钟即可完成部署
 - ⚡ **高性能转发** - 基于 Netty NIO 框架，支持高并发连接
+- 🚀 **WebRTC 传输** - v1.2.0 新增 WebRTC DataChannel，延迟降低 30-50%
 - 🔐 **安全认证** - Token 机制 + 可选 SSL/TLS 加密
 - 🌐 **跨平台支持** - 服务端 Java，客户端 Go，支持 Windows/Linux/macOS
 - 📦 **轻量级** - 服务端 JAR 仅 29MB，客户端 exe 仅 2.4MB
+
+---
+
+## v1.2.0 新特性
+
+### 1. 产品化改造 - 零配置体验
+
+outView 1.2.0 完成产品化改造，实现类似 UU远程、向日葵的零配置体验：
+
+- **6位设备码**: 自动生成基于硬件的唯一设备码（100000-999999）
+- **图形化界面**: Fyne GUI，双标签页设计（被控端/控制端）
+- **一键连接**: 输入对方设备码即可连接，自动启动 mstsc
+- **硬编码服务器**: 内置公网服务器地址，用户无需配置
+- **设备码查询**: 新增 Rendezvous 服务器，支持设备码到端口的映射查询
+- **Windows 安装包**: Inno Setup 打包，支持开机自启
+
+### 2. WebRTC 传输优化
+
+- **延迟降低 30-50%**: WebRTC UDP 传输 vs TCP 转发
+- **弱网稳定性提升**: SCTP 可靠传输 + ICE 重连
+- **自动降级**: WebRTC 失败时无缝切换到 TCP
+- **Sidecar 架构**: 独立 Go 进程管理 WebRTC
+- **GUI 配置**: WebRTC 配置选项卡，支持 STUN/TURN 服务器配置
+
+### 3. GUI 增强功能
+
+- **连接状态显示**: 实时显示连接类型（TCP/WebRTC）、延迟、流量
+- **系统托盘**: 最小化到托盘，后台运行
+- **WebRTC 配置**: 图形化配置 STUN/TURN 服务器、传输策略
+
+---
+
+## v1.2.0 新特性：WebRTC 传输优化（已废弃，见上方）
+
+outView 1.2.0 引入了 WebRTC DataChannel 传输层，显著提升远程桌面体验：
+
+- **延迟降低 30-50%**: WebRTC UDP 传输 vs TCP 转发
+- **弱网稳定性提升**: SCTP 可靠传输 + ICE 重连
+- **自动降级**: WebRTC 失败时无缝切换到 TCP，保证连接成功率
+- **Sidecar 架构**: 独立 Go 进程管理 WebRTC，不影响 Java 服务稳定性
+
+### 架构
+
+```
+Java 服务器 ←→ IPC (Unix Socket/Named Pipe) ←→ Go WebRTC Sidecar
+                                                        ↕ WebRTC DataChannel
+                                                   Go 客户端 (pion/webrtc v4)
+```
+
+详见 [WebRTC 用户指南](docs/webrtc-user-guide.md) | [故障排查](docs/webrtc-troubleshooting.md)
 
 ---
 
@@ -79,9 +131,36 @@
 |------|------|------|
 | JDK | 8+ | 运行服务端 |
 | Maven | 3.6+ | 编译服务端（可选） |
-| Go | 1.21+ | 编译客户端（可选） |
+| Go | 1.24+ | 编译客户端（可选） |
 
-### 1. 部署服务端
+### 方式一：产品化部署（推荐）
+
+**1. 安装客户端**
+
+Windows: 运行 `outview-1.2.0-setup.exe`，安装后自动启动
+
+**2. 被控端操作**
+
+- 打开 outView，切换到"被控端（本机）"标签
+- 查看您的 6 位设备码（如 `123 456`）
+- 点击"启动被控服务"
+- 将设备码告诉对方
+
+**3. 控制端操作**
+
+- 打开 outView，切换到"控制端（连接）"标签
+- 输入对方的设备码
+- 点击"连接"，自动打开远程桌面
+
+**4. WebRTC 配置（可选）**
+
+- 切换到"WebRTC 配置"标签
+- 配置 STUN/TURN 服务器
+- 调整传输策略（直连优先/仅中继）
+
+### 方式二：传统部署（需配置服务器）
+
+**1. 部署服务端**
 
 ```bash
 # 方式一：直接运行 JAR
@@ -92,13 +171,13 @@ mvn package -DskipTests
 java -jar target/outview-server.jar
 ```
 
-### 2. 生成 Token
+**2. 生成 Token**
 
 访问管理后台 `http://服务器IP:8080`，点击 **"生成新 Token"**
 
 记录返回的 `deviceId` 和 `token`
 
-### 3. 运行客户端
+**3. 运行客户端**
 
 **命令行方式：**
 ```bash
@@ -118,11 +197,15 @@ local-port=3389
 
 双击 `outview-client.exe` 即可自动读取配置
 
-### 4. 连接远程桌面
+**4. 连接远程桌面**
 
 1. 打开 Windows 远程桌面连接 (`Win + R` → `mstsc`)
 2. 输入 `服务器IP:分配端口`（如 `example.com:6001`）
 3. 输入家庭电脑的 Windows 用户名和密码
+
+---
+
+## 快速开始（旧版，已废弃）
 
 ---
 

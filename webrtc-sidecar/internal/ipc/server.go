@@ -1,0 +1,298 @@
+// Package ipc implements the IPC server for Java ↔ Go communication.
+// Protocol: [4 bytes big-endian length][JSON payload]
+// Message structure: {"type": "...", "payload": {...}}
+package ipc
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// Message is the standard IPC message format.
+type Message struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// Handler is a function that processes an incoming message and returns a response.
+// Return nil to send no response.
+type Handler func(msg *Message) *Message
+
+// Server is the IPC server that listens for connections.
+type Server struct {
+	listener    net.Listener
+	handler     Handler
+	connHandler func(net.Conn, *Message) *Message // optional; takes precedence over handler
+	connCount   int64
+	done        chan struct{}
+	wg          sync.WaitGroup
+	closeOnce   sync.Once
+
+	// onDisconnect is called (in a goroutine) whenever a client connection closes.
+	// It receives the remote address of the disconnected client.
+	// Protected by mu.
+	mu           sync.RWMutex
+	onDisconnect func(remoteAddr string)
+}
+
+// NewServer creates a new IPC server with the given message handler.
+func NewServer(handler Handler) *Server {
+	return &Server{
+		handler: handler,
+		done:    make(chan struct{}),
+	}
+}
+
+// ListenIPC starts the server using the platform-specific IPC mechanism.
+// On Unix/Linux/macOS, uses Unix Domain Socket.
+// On Windows, uses Named Pipe (address should be "\\.\pipe\<name>").
+func (s *Server) ListenIPC(address string) error {
+	ln, err := listenIPC(address)
+	if err != nil {
+		return fmt.Errorf("ipc: listen %s: %w", address, err)
+	}
+	s.listener = ln
+	log.Printf("[IPC] Listening on %s", address)
+	go s.acceptLoop()
+	return nil
+}
+
+// ListenTCP starts the server on a TCP address (e.g. "127.0.0.1:9999").
+// Used as fallback on Windows where Unix sockets may not be available.
+func (s *Server) ListenTCP(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("ipc: listen tcp %s: %w", addr, err)
+	}
+	s.listener = ln
+	log.Printf("[IPC] Listening on TCP %s", addr)
+	go s.acceptLoop()
+	return nil
+}
+
+// ListenUnix starts the server on a Unix domain socket path.
+func (s *Server) ListenUnix(socketPath string) error {
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("ipc: listen unix %s: %w", socketPath, err)
+	}
+	s.listener = ln
+	log.Printf("[IPC] Listening on Unix socket %s", socketPath)
+	go s.acceptLoop()
+	return nil
+}
+
+// ServeWithRouter starts the server using a Router that receives the net.Conn.
+func (s *Server) ServeWithRouter(address string, router *Router) error {
+	s.connHandler = router.Dispatch
+	return s.ListenIPC(address)
+}
+
+// Close shuts down the server and waits for all connections to finish.
+// Safe to call multiple times.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		if s.listener != nil {
+			s.listener.Close()
+		}
+		s.wg.Wait()
+	})
+}
+
+// SetOnDisconnect registers a callback that is invoked whenever a client
+// connection closes. The callback receives the remote address of the
+// disconnected client. Only one callback can be registered at a time.
+func (s *Server) SetOnDisconnect(fn func(remoteAddr string)) {
+	s.mu.Lock()
+	s.onDisconnect = fn
+	s.mu.Unlock()
+}
+
+// ConnCount returns the current number of active connections.
+func (s *Server) ConnCount() int64 {
+	return atomic.LoadInt64(&s.connCount)
+}
+
+// Addr returns the address the server is listening on.
+// Returns an empty string if the server is not listening.
+func (s *Server) Addr() string {
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
+
+func (s *Server) acceptLoop() {
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-s.done:
+				return
+			default:
+				log.Printf("[IPC] Accept error: %v", err)
+				continue
+			}
+		}
+		s.wg.Add(1)
+		atomic.AddInt64(&s.connCount, 1)
+		go s.handleConn(conn)
+	}
+}
+
+func (s *Server) handleConn(conn net.Conn) {
+	remoteAddr := conn.RemoteAddr().String()
+	defer func() {
+		conn.Close()
+		atomic.AddInt64(&s.connCount, -1)
+		s.wg.Done()
+
+		// Notify disconnect listener (if any).
+		s.mu.RLock()
+		cb := s.onDisconnect
+		s.mu.RUnlock()
+		if cb != nil {
+			cb(remoteAddr)
+		}
+	}()
+
+	for {
+		// Read 4-byte big-endian length prefix
+		var length uint32
+		if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+			if err != io.EOF {
+				log.Printf("[IPC] Read length error: %v", err)
+			}
+			return
+		}
+
+		if length == 0 || length > 4*1024*1024 { // max 4MB
+			log.Printf("[IPC] Invalid message length: %d", length)
+			return
+		}
+
+		// Read JSON payload
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			log.Printf("[IPC] Read payload error: %v", err)
+			return
+		}
+
+		var msg Message
+		if err := json.Unmarshal(buf, &msg); err != nil {
+			log.Printf("[IPC] JSON unmarshal error: %v", err)
+			errPayload, _ := json.Marshal(map[string]string{"error": "invalid json"})
+			_ = WriteMessage(conn, &Message{Type: "error", Payload: errPayload})
+			continue // keep connection alive
+		}
+
+		// Dispatch to handler
+		var resp *Message
+		if s.connHandler != nil {
+			resp = s.connHandler(conn, &msg)
+		} else {
+			resp = s.handler(&msg)
+		}
+		if resp == nil {
+			continue
+		}
+
+		// Write response
+		if err := WriteMessage(conn, resp); err != nil {
+			log.Printf("[IPC] Write response error: %v", err)
+			return
+		}
+	}
+}
+
+// WriteMessage writes a message to a connection using the length-prefixed protocol.
+func WriteMessage(w io.Writer, msg *Message) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("ipc: marshal message: %w", err)
+	}
+
+	length := uint32(len(data))
+	if err := binary.Write(w, binary.BigEndian, length); err != nil {
+		return fmt.Errorf("ipc: write length: %w", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("ipc: write payload: %w", err)
+	}
+	return nil
+}
+
+// ReadMessage reads a single message from a connection.
+func ReadMessage(r io.Reader) (*Message, error) {
+	var length uint32
+	if err := binary.Read(r, binary.BigEndian, &length); err != nil {
+		return nil, fmt.Errorf("ipc: read length: %w", err)
+	}
+
+	if length == 0 || length > 4*1024*1024 {
+		return nil, fmt.Errorf("ipc: invalid message length: %d", length)
+	}
+
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, fmt.Errorf("ipc: read payload: %w", err)
+	}
+
+	var msg Message
+	if err := json.Unmarshal(buf, &msg); err != nil {
+		return nil, fmt.Errorf("ipc: unmarshal: %w", err)
+	}
+	return &msg, nil
+}
+
+// PingPayload is the payload for ping messages.
+type PingPayload struct {
+	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`
+}
+
+// PongPayload is the payload for pong responses.
+type PongPayload struct {
+	Timestamp   int64  `json:"timestamp"`
+	EchoMessage string `json:"echo_message"`
+	ServerTime  int64  `json:"server_time"`
+}
+
+// DefaultHandler is a simple ping-pong handler for POC validation.
+func DefaultHandler(msg *Message) *Message {
+	switch msg.Type {
+	case "ping":
+		var ping PingPayload
+		if msg.Payload != nil {
+			_ = json.Unmarshal(msg.Payload, &ping)
+		}
+		log.Printf("[IPC] Received ping: %s (ts=%d)", ping.Message, ping.Timestamp)
+
+		pong := PongPayload{
+			Timestamp:   ping.Timestamp,
+			EchoMessage: ping.Message,
+			ServerTime:  time.Now().UnixMilli(),
+		}
+		payload, _ := json.Marshal(pong)
+		return &Message{
+			Type:    "pong",
+			Payload: payload,
+		}
+
+	default:
+		log.Printf("[IPC] Unknown message type: %s", msg.Type)
+		errPayload, _ := json.Marshal(map[string]string{"error": "unknown type: " + msg.Type})
+		return &Message{
+			Type:    "error",
+			Payload: errPayload,
+		}
+	}
+}

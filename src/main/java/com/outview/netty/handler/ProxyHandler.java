@@ -13,8 +13,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 数据代理处理器
- * 处理来自客户端的数据转发消息
- * 将数据转发给对应的外部用户连接
+ * 处理来自客户端的数据转发消息，将数据转发给对应的外部用户连接
  */
 @Slf4j
 @Component
@@ -41,9 +40,11 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
             case ProtocolConstants.TYPE_DATA:
                 handleDataMessage(ctx, msg);
                 break;
+            case ProtocolConstants.TYPE_CLOSE_CONNECTION:
+                handleCloseConnectionMessage(msg);
+                break;
             case ProtocolConstants.TYPE_REGISTER:
             case ProtocolConstants.TYPE_HEARTBEAT:
-                // 这些消息由其他处理器处理，直接传递
                 ctx.fireChannelRead(msg);
                 break;
             default:
@@ -52,12 +53,7 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
         }
     }
 
-    /**
-     * 处理数据消息
-     * 从客户端收到数据后转发给对应的外部用户
-     */
     private void handleDataMessage(ChannelHandlerContext ctx, ProtocolMessage msg) {
-        // 解析数据包（支持带连接ID的格式）
         ProtocolMessage.DataPacket dataPacket = msg.parseDataPacket();
         if (dataPacket == null) {
             log.warn("Failed to parse data packet");
@@ -67,15 +63,10 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
         String connectionId = dataPacket.getConnectionId();
         byte[] data = dataPacket.getData();
 
-        log.info("[ProxyHandler] Received data: connectionId={}, length={}", connectionId, data.length);
-
-        if (connectionId != null) {
-            // 带连接ID的数据，直接路由到对应用户
+        if (connectionId != null && !connectionId.isEmpty()) {
             boolean sent = rawDataHandler.sendToUser(connectionId, data);
-            log.info("[ProxyHandler] Forwarded to user: connectionId={}, length={}, sent={}",
-                    connectionId, data.length, sent);
+            log.debug("[ProxyHandler] Forwarded to user: connectionId={}, length={}, sent={}", connectionId, data.length, sent);
         } else {
-            // 无连接ID的数据（旧格式兼容）
             ClientSession session = sessionStore.getSessionByChannel(ctx.channel());
             if (session != null) {
                 log.debug("Received data without connectionId from device: deviceId={}, length={}",
@@ -84,13 +75,22 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
         }
     }
 
+    private void handleCloseConnectionMessage(ProtocolMessage msg) {
+        String connectionId = msg.parseCloseConnectionId();
+        if (connectionId == null || connectionId.isEmpty()) {
+            log.warn("Close connection message missing connectionId");
+            return;
+        }
+        boolean closed = rawDataHandler.closeUserConnectionByConnectionId(connectionId);
+        log.info("[ProxyHandler] Close connection: connectionId={}, closed={}", connectionId, closed);
+    }
+
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         ClientSession session = sessionStore.getSessionByChannel(ctx.channel());
         if (session != null) {
             log.info("Client connection closed: deviceId={}", session.getDeviceId());
         }
-
         super.channelInactive(ctx);
     }
 

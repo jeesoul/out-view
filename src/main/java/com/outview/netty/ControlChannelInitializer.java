@@ -4,6 +4,7 @@ import com.outview.config.OutViewProperties;
 import com.outview.netty.handler.AuthHandler;
 import com.outview.netty.handler.HeartbeatHandler;
 import com.outview.netty.handler.ProxyHandler;
+import com.outview.netty.handler.RendezvousHandler;
 import com.outview.netty.ssl.SslContextFactory;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
@@ -27,6 +28,7 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
     private final AuthHandler authHandler;
     private final HeartbeatHandler heartbeatHandler;
     private final ProxyHandler proxyHandler;
+    private final RendezvousHandler rendezvousHandler;
     private final OutViewProperties properties;
 
     private SslContext sslContext;
@@ -34,10 +36,12 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
     public ControlChannelInitializer(AuthHandler authHandler,
                                      HeartbeatHandler heartbeatHandler,
                                      ProxyHandler proxyHandler,
+                                     RendezvousHandler rendezvousHandler,
                                      OutViewProperties properties) {
         this.authHandler = authHandler;
         this.heartbeatHandler = heartbeatHandler;
         this.proxyHandler = proxyHandler;
+        this.rendezvousHandler = rendezvousHandler;
         this.properties = properties;
     }
 
@@ -75,6 +79,7 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
         // 业务处理器
         pipeline.addLast("auth", authHandler);
         pipeline.addLast("heartbeat", heartbeatHandler);
+        pipeline.addLast("rendezvous", rendezvousHandler);
         pipeline.addLast("proxy", proxyHandler);
     }
 }

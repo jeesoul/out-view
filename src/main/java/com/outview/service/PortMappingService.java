@@ -113,6 +113,37 @@ public class PortMappingService {
     }
 
     /**
+     * 更新设备的对外端口（管理员操作）
+     * 返回旧端口，若设备不存在返回 -1
+     */
+    public int updateExternalPort(String deviceId, int newPort) {
+        Integer oldPort = deviceToPortMap.get(deviceId);
+        if (oldPort == null) {
+            return -1;
+        }
+        if (oldPort == newPort) {
+            return oldPort;
+        }
+        if (portMappingMap.containsKey(newPort)) {
+            throw new IllegalArgumentException("Port " + newPort + " is already in use");
+        }
+
+        PortMapping old = portMappingMap.remove(oldPort);
+        PortMapping updated = PortMapping.builder()
+                .externalPort(newPort)
+                .deviceId(deviceId)
+                .targetPort(old.getTargetPort())
+                .createTime(old.getCreateTime())
+                .build();
+
+        portMappingMap.put(newPort, updated);
+        deviceToPortMap.put(deviceId, newPort);
+
+        log.info("Port updated: deviceId={}, oldPort={}, newPort={}", deviceId, oldPort, newPort);
+        return oldPort;
+    }
+
+    /**
      * 分配下一个可用端口
      */
     private int allocateNextPort() {

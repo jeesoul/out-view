@@ -1,0 +1,108 @@
+version: "3.8"
+
+# NAT Matrix Test Environment
+# Tests WebRTC connectivity across different NAT type combinations
+# Uses coturn as TURN server and custom NAT simulation containers
+
+services:
+  # TURN server for relay tests
+  coturn:
+    image: coturn/coturn:4.6.2
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/tcp"
+    command: >
+      -n
+      --log-file=stdout
+      --lt-cred-mech
+      --fingerprint
+      --no-multicast-peers
+      --no-cli
+      --no-tlsv1
+      --no-tlsv1_1
+      --realm=test.local
+      --user=testuser:testpass
+      --external-ip=172.20.0.10
+    networks:
+      nat-test:
+        ipv4_address: 172.20.0.10
+
+  # Full Cone NAT simulator (client side)
+  nat-full-cone:
+    image: alpine:3.18
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "
+        apk add --no-cache iptables &&
+        # Full cone: any external host can send to mapped port
+        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
+        iptables -A FORWARD -j ACCEPT &&
+        sleep infinity
+      "
+    networks:
+      nat-test:
+        ipv4_address: 172.20.0.20
+      client-net-1:
+        ipv4_address: 10.10.1.1
+
+  # Symmetric NAT simulator
+  nat-symmetric:
+    image: alpine:3.18
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "
+        apk add --no-cache iptables &&
+        # Symmetric: different mapping per destination
+        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE --random &&
+        iptables -A FORWARD -j ACCEPT &&
+        sleep infinity
+      "
+    networks:
+      nat-test:
+        ipv4_address: 172.20.0.21
+      client-net-2:
+        ipv4_address: 10.10.2.1
+
+  # WebRTC sidecar (server side)
+  sidecar:
+    build:
+      context: ../../webrtc-sidecar
+      dockerfile: Dockerfile
+    environment:
+      - IPC_SOCKET=/tmp/webrtc-sidecar.sock
+    networks:
+      nat-test:
+        ipv4_address: 172.20.0.30
+    volumes:
+      - sidecar-ipc:/tmp
+
+  # Signaling server (mock Java server)
+  signaling:
+    image: alpine:3.18
+    command: sleep infinity
+    networks:
+      nat-test:
+        ipv4_address: 172.20.0.40
+
+networks:
+  nat-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  client-net-1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.1.0/24
+  client-net-2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.2.0/24
+
+volumes:
+  sidecar-ipc:

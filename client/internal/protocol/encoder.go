@@ -77,7 +77,7 @@ func EncodeToBytes(msg *Message) ([]byte, error) {
 		return nil, fmt.Errorf("message or header is nil")
 	}
 
-	totalLen := HeaderLength + msg.Header.Length
+	totalLen := HeaderLength + int(msg.Header.Length)
 	buf := make([]byte, totalLen)
 
 	// Write header

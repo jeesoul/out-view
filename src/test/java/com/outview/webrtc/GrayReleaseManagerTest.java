@@ -1,0 +1,210 @@
+package com.outview.webrtc;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class GrayReleaseManagerTest {
+
+    private GrayReleaseManager newManager(boolean enabled, int percentage) {
+        GrayReleaseManager m = new GrayReleaseManager();
+        m.setEnabled(enabled);
+        m.setPercentage(percentage);
+        return m;
+    }
+
+    @Test
+    void testDisabled() {
+        GrayReleaseManager m = newManager(false, 100);
+        assertFalse(m.shouldUseWebRTC("any-device"));
+        assertFalse(m.isEnabled());
+        assertEquals(100, m.getPercentage());
+    }
+
+    @Test
+    void testZeroPercent() {
+        GrayReleaseManager m = newManager(true, 0);
+        for (int i = 0; i < 100; i++) {
+            assertFalse(m.shouldUseWebRTC("dev-" + i),
+                    "0% should never enable WebRTC, dev-" + i + " did");
+        }
+    }
+
+    @Test
+    void testNegativePercentClampsToZero() {
+        GrayReleaseManager m = newManager(true, -1);
+        assertEquals(0, m.getPercentage(), "negative percentage must clamp to 0");
+        assertFalse(m.shouldUseWebRTC("dev-0"));
+    }
+
+    @Test
+    void testHundredPercent() {
+        GrayReleaseManager m = newManager(true, 100);
+        for (int i = 0; i < 100; i++) {
+            assertTrue(m.shouldUseWebRTC("dev-" + i),
+                    "100% must always enable WebRTC, dev-" + i + " did not");
+        }
+    }
+
+    @Test
+    void testOverHundredPercentClampsToHundred() {
+        GrayReleaseManager m = newManager(true, 150);
+        assertEquals(100, m.getPercentage(), ">100 percentage must clamp to 100");
+        assertTrue(m.shouldUseWebRTC("dev-x"));
+    }
+
+    @Test
+    void testNullDevice() {
+        GrayReleaseManager m = newManager(true, 100);
+        assertFalse(m.shouldUseWebRTC(null));
+    }
+
+    @Test
+    void testFiftyPercentDistribution() {
+        GrayReleaseManager m = newManager(true, 50);
+        int hits = 0;
+        int n = 1000;
+        for (int i = 0; i < n; i++) {
+            if (m.shouldUseWebRTC(UUID.randomUUID().toString())) {
+                hits++;
+            }
+        }
+        double rate = hits / (double) n;
+        assertTrue(rate >= 0.40 && rate <= 0.60,
+                "Expected ~50% (±10pp) WebRTC adoption at percentage=50, got " + rate);
+    }
+
+    @Test
+    void testTenPercentDistribution() {
+        GrayReleaseManager m = newManager(true, 10);
+        int hits = 0;
+        int n = 2000;
+        for (int i = 0; i < n; i++) {
+            if (m.shouldUseWebRTC(UUID.randomUUID().toString())) {
+                hits++;
+            }
+        }
+        double rate = hits / (double) n;
+        assertTrue(rate >= 0.05 && rate <= 0.15,
+                "Expected ~10% (±5pp) WebRTC adoption at percentage=10, got " + rate);
+    }
+
+    @Test
+    void testDeterministic() {
+        GrayReleaseManager m = newManager(true, 30);
+        String dev = "stable-device-id-12345";
+        boolean first = m.shouldUseWebRTC(dev);
+        for (int i = 0; i < 50; i++) {
+            assertEquals(first, m.shouldUseWebRTC(dev),
+                    "Same deviceId must return the same bucket on every call");
+        }
+    }
+
+    @Test
+    void testHashCodeMinValueDoesNotThrow() {
+        GrayReleaseManager m = newManager(true, 50);
+        String[] inputs = new String[]{"", "polygenelubricants", "DESIGNING WORKHOUSES", "device- "};
+        for (String s : inputs) {
+            boolean a = m.shouldUseWebRTC(s);
+            boolean b = m.shouldUseWebRTC(s);
+            assertEquals(a, b);
+        }
+    }
+
+    @Test
+    void testDynamicEnableDisable() {
+        GrayReleaseManager m = newManager(true, 100);
+        String dev = "dyn-toggle-1";
+        assertTrue(m.shouldUseWebRTC(dev));
+
+        boolean prev = m.setEnabled(false);
+        assertTrue(prev, "setEnabled should return prior value (true)");
+        assertFalse(m.shouldUseWebRTC(dev), "should drop out immediately when disabled at runtime");
+
+        m.setEnabled(true);
+        assertTrue(m.shouldUseWebRTC(dev), "should resume immediately when re-enabled");
+    }
+
+    @Test
+    void testDynamicPercentageRamp() {
+        GrayReleaseManager m = newManager(true, 0);
+        String dev = "dyn-ramp-1";
+        assertFalse(m.shouldUseWebRTC(dev));
+
+        m.setPercentage(10);
+        assertEquals(10, m.getPercentage());
+
+        m.setPercentage(50);
+        assertEquals(50, m.getPercentage());
+
+        m.setPercentage(100);
+        assertTrue(m.shouldUseWebRTC(dev), "100% must always include the device");
+
+        m.setPercentage(-5);
+        assertEquals(0, m.getPercentage(), "negatives clamp to 0");
+        assertFalse(m.shouldUseWebRTC(dev));
+    }
+
+    @Test
+    void testRollbackPattern() {
+        GrayReleaseManager m = newManager(true, 50);
+        String dev = "rollback-dev";
+        boolean before = m.shouldUseWebRTC(dev);
+
+        // Operator disables for emergency rollback.
+        m.setEnabled(false);
+        assertFalse(m.shouldUseWebRTC(dev));
+
+        // Re-enable: deterministic — same device routes to same answer as before.
+        m.setEnabled(true);
+        assertEquals(before, m.shouldUseWebRTC(dev),
+                "rollback then re-enable must produce the same routing decision");
+    }
+
+    @Test
+    void testConcurrentReadsDuringTogglingDoNotThrow() throws Exception {
+        GrayReleaseManager m = newManager(true, 50);
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        CountDownLatch latch = new CountDownLatch(4);
+        try {
+            for (int t = 0; t < 4; t++) {
+                pool.execute(() -> {
+                    try {
+                        for (int i = 0; i < 5_000; i++) {
+                            m.shouldUseWebRTC("dev-" + (i % 200));
+                        }
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+            // Toggle settings while reads are in flight.
+            for (int i = 0; i < 200; i++) {
+                m.setPercentage(i % 101);
+                m.setEnabled((i & 1) == 0);
+            }
+            assertTrue(latch.await(30, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+        // Final state still reachable without exception.
+        m.setEnabled(true);
+        m.setPercentage(100);
+        assertTrue(m.shouldUseWebRTC("after-stress"));
+    }
+
+    @Test
+    void testBucketAlgorithmPublicApi() {
+        // 0 <= bucket < 100 for any string, even pathological hash values.
+        for (int i = 0; i < 1000; i++) {
+            int bucket = GrayReleaseManager.bucketOf(UUID.randomUUID().toString());
+            assertTrue(bucket >= 0 && bucket < 100, "bucket out of range: " + bucket);
+        }
+    }
+}

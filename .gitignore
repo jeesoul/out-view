@@ -46,6 +46,24 @@ Thumbs.db
 client/build/
 client/outview-client.exe
 client/outview-client
+client/outview-client-darwin-*
+client/outview-client-linux-*
+client/outview-client-windows-amd64.exe
+client/*.msi
+
+# WebRTC sidecar binaries
+webrtc-sidecar/*.exe
+webrtc-sidecar/*.test
+
+# Test results
+test/performance/results/
+_testbin/
+
+# Chaos testing
+.chaos-harness/
+
+# Data directory
+data/
 
 # Secrets (never commit)
 *.pem
@@ -66,3 +84,4 @@ DEPLOYMENT.md
 
 # Release packages (never commit)
 release/
+.worktrees/

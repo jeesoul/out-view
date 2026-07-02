@@ -15,12 +15,25 @@ const MaxBodyLength = 10 * 1024 * 1024
 
 // Message types
 const (
-	TypeRegister     byte = 1 // Registration request
-	TypeHeartbeat    byte = 2 // Heartbeat request
-	TypeData         byte = 3 // Data forward
-	TypeError        byte = 4 // Error message
-	TypeRegisterAck  byte = 5 // Registration response
-	TypeHeartbeatAck byte = 6 // Heartbeat response
+	TypeRegister        byte = 1 // Registration request
+	TypeHeartbeat       byte = 2 // Heartbeat request
+	TypeData            byte = 3 // Data forward
+	TypeError           byte = 4 // Error message
+	TypeRegisterAck     byte = 5 // Registration response
+	TypeHeartbeatAck    byte = 6 // Heartbeat response
+	TypeCloseConnection byte = 7 // Connection close notification
+
+	// WebRTC signaling message types
+	TypeWebRTCOffer        byte = 8  // Client → Server: WebRTC offer SDP
+	TypeWebRTCAnswer       byte = 9  // Server → Client: WebRTC answer SDP
+	TypeWebRTCICECandidate byte = 10 // Bidirectional: ICE candidate
+	TypeWebRTCICEComplete  byte = 11 // Bidirectional: ICE gathering complete
+	TypeWebRTCEstablished  byte = 12 // Server → Client: WebRTC connection established
+	TypeWebRTCFailed       byte = 13 // Bidirectional: WebRTC connection failed
+
+	// Rendezvous (设备码汇聚) message types
+	TypeDeviceQuery    byte = 14 // 控制端查询被控端信息
+	TypeDeviceQueryAck byte = 15 // 服务端返回被控端信息
 )
 
 // Default heartbeat interval (30 seconds)
