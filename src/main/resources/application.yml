@@ -7,6 +7,44 @@ spring:
   main:
     allow-circular-references: true
 
+  # 数据库配置 - 默认使用 H2 嵌入式数据库（零配置，数据持久化到文件）
+  datasource:
+    url: jdbc:h2:file:./data/outview;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  # 切换 MySQL 示例（取消注释并注释掉上面的 H2 配置）：
+  # datasource:
+  #   url: jdbc:mysql://localhost:3306/outview?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+  #   driver-class-name: com.mysql.cj.jdbc.Driver
+  #   username: root
+  #   password: your_password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    database-platform: org.hibernate.dialect.H2Dialect
+  # 切换 MySQL 时改为：
+  # jpa:
+  #   database-platform: org.hibernate.dialect.MySQL8Dialect
+
+  h2:
+    console:
+      enabled: false
+
+# outView 管理后台账号配置
+# 支持多个账号，密码明文存储（服务器内网使用）
+outview-admin:
+  users:
+    - username: admin
+      password: outview123
+      role: ADMIN
+    # 可继续添加更多账号：
+    # - username: viewer
+    #   password: view456
+    #   role: VIEWER
+
 # outView 配置
 outview:
   # Netty 控制端口 (客户端注册/心跳)
@@ -23,20 +61,10 @@ outview:
 
   # SSL/TLS 配置
   ssl:
-    # 是否启用 SSL/TLS (生产环境建议启用)
     enabled: false
-    # 使用自签名证书 (仅用于开发/测试环境，生产环境请使用 CA 签名的证书)
     use-self-signed: true
-    # 自签名证书 CN (Common Name)
     self-signed-cn: outview-server
-    # 自签名证书有效期 (天)
     self-signed-validity-days: 365
-    # 以下配置用于生产环境 (取消注释并配置)
-    # cert-path: file:/path/to/cert.pem
-    # key-path: file:/path/to/key.pem
-    # key-password: your-key-password
-    # trust-cert-path: file:/path/to/trust.pem
-    # need-client-auth: false
 
 # 日志配置
 logging:

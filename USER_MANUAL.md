@@ -39,7 +39,7 @@
 3. [服务端部署](#3-服务端部署)
 4. [客户端配置](#4-客户端配置)
 5. [远程桌面连接](#5-远程桌面连接)
-6. [管理后台](#6-管理后台)
+6. [管理后台（登录 / 设备封禁 / 端口映射）](#6-管理后台)
 7. [API 接口文档](#7-api-接口文档)
 8. [故障排除](#8-故障排除)
 9. [安全建议](#9-安全建议)
@@ -326,6 +326,47 @@ export OUTVIEW_TOKEN=your-token
 ./outview-client
 ```
 
+**Linux 后台运行:**
+
+方式一 —— nohup 简单后台：
+
+```bash
+nohup ./outview-client -host your-server.com -device-id my-device -token secret-token > outview-client.log 2>&1 &
+tail -f outview-client.log
+```
+
+方式二 —— systemd 服务（推荐，开机自启 + 崩溃自动重启）：
+
+创建 `/etc/systemd/system/outview-client.service`：
+
+```ini
+[Unit]
+Description=outView Client
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/outview-client
+ExecStart=/opt/outview-client/outview-client -config /opt/outview-client/config.txt
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用并启动：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable outview-client
+sudo systemctl start outview-client
+sudo systemctl status outview-client      # 查看运行状态
+journalctl -u outview-client -f           # 查看日志
+```
+
+> **说明：** CLI 客户端（`cmd/outview-client`）无图形界面，适合 Linux 服务器/无桌面环境常驻后台。被控端的对外端口由服务端在注册时自动分配，可在管理后台查看或通过"修改端口"调整（见 6.5）。GUI 客户端（Fyne）主要面向 Windows 桌面的零配置场景。
+
 ### 4.3 Java 客户端（备用）
 
 **交互式客户端:**
@@ -454,11 +495,40 @@ WinSW.exe start outview-client.xml
 
 ## 6. 管理后台
 
-### 6.1 访问管理后台
+### 6.1 登录认证
 
-打开浏览器访问: `http://服务器IP:8080/index.html`
+自 v1.2.0 起，管理后台需要登录才能访问（基于 Spring Security HTTP Basic 认证）。
 
-### 6.2 功能说明
+打开浏览器访问: `http://服务器IP:8080/index.html`，未登录时会自动跳转到登录页 `login.html`。
+
+**默认账号：**
+
+| 用户名 | 密码 | 角色 |
+|--------|------|------|
+| admin | outview123 | ADMIN |
+
+> 生产环境请务必修改默认密码，见下方"账号配置"。
+
+**免认证接口：** 仅 `/health` 健康检查接口无需登录，其余 `/`、`/index.html`、`/api/**` 均需认证。
+
+### 6.2 账号配置（多账号）
+
+在 `application.yml` 中配置 `outview-admin.users`，支持配置多个账号（密码明文存储，仅限服务器内网使用）：
+
+```yaml
+outview-admin:
+  users:
+    - username: admin
+      password: your-strong-password    # 修改为强密码
+      role: ADMIN
+    - username: viewer
+      password: view456
+      role: VIEWER
+```
+
+> 若未配置任何账号，系统会自动创建默认账号 `admin / outview123`。修改配置后需重启服务端生效。
+
+### 6.3 功能说明
 
 **统计面板:**
 - 在线设备数
@@ -472,25 +542,46 @@ WinSW.exe start outview-client.xml
 **设备管理:**
 - 查看在线设备列表
 - 查看设备状态
-- 强制断开设备
+- 强制断开设备（普通断开，允许重连）
+- **彻底封禁设备**（踢下线 + 加入黑名单，重连直接拒绝）
+
+**封禁设备管理:**
+- 查看已封禁设备列表（含封禁时间、操作人、原因）
+- 解封设备（从黑名单移除，允许重新连接）
 
 **端口映射:**
-- 查看所有端口映射
-- 对外端口与设备的对应关系
+- 查看所有端口映射（对外端口与设备的对应关系）
+- **修改对外端口**（在线设备可将对外端口改为指定值）
 
-### 6.3 自动刷新
+### 6.4 封禁与解封设备
 
-管理后台每 10 秒自动刷新数据。
+**封禁：** 在设备列表点击"彻底封禁"按钮。封禁后该设备会被立即踢下线，且此后携带相同设备 ID 的注册请求会在 `AuthHandler` 阶段被直接拒绝并关闭连接。封禁记录持久化到数据库（H2/MySQL），重启服务端后依然有效。
+
+**解封：** 在"封禁设备"卡片中点击对应设备的"解封"按钮，即可从黑名单移除。
+
+### 6.5 修改设备对外端口
+
+在端口映射表中点击"修改端口"，输入新的对外端口。系统会停止旧端口的数据监听、在新端口重新启动监听，映射关系随之更新。
+
+> **限制：** 只能修改**当前在线设备**的端口。离线或未注册设备无法预设端口（会返回 `Device not found or not connected`）。若目标端口已被占用，会返回错误提示。
+
+### 6.6 自动刷新
+
+管理后台每 10 秒自动刷新数据。前端在登录后会将凭据以 Basic Auth 头附加到每个 API 请求，可通过页面右上角"退出登录"清除会话。
 
 ---
 
 ## 7. API 接口文档
+
+> **认证说明：** 除 `/health` 外，所有 `/api/**` 接口均需 HTTP Basic 认证。使用 `curl` 时通过 `-u 用户名:密码` 传递凭据，例如 `curl -u admin:outview123 ...`。
 
 ### 7.1 健康检查
 
 ```
 GET /health
 ```
+
+（无需认证）
 
 **响应:**
 
@@ -534,7 +625,7 @@ GET /api/devices
 GET /api/devices/{deviceId}
 ```
 
-**强制断开设备:**
+**强制断开设备（允许重连）:**
 
 ```
 DELETE /api/devices/{deviceId}
@@ -546,7 +637,64 @@ DELETE /api/devices/{deviceId}
 GET /api/devices/mappings
 ```
 
-### 7.3 Token 管理
+**修改设备对外端口（仅在线设备）:**
+
+```
+PUT /api/devices/mappings/{deviceId}
+Content-Type: application/json
+
+{ "externalPort": 6010 }
+```
+
+响应（成功）：
+
+```json
+{ "success": true, "deviceId": "device-001", "oldPort": 6001, "newPort": 6010 }
+```
+
+设备离线或端口非法/被占用时返回 `success: false` 及错误信息。
+
+### 7.3 设备封禁
+
+**封禁设备（踢下线 + 加入黑名单）:**
+
+```
+POST /api/devices/{deviceId}/ban
+Content-Type: application/json
+
+{ "reason": "违规使用" }
+```
+
+`reason` 可选，缺省为"管理员封禁"。响应：
+
+```json
+{ "success": true, "deviceId": "device-001", "bannedBy": "admin", "reason": "违规使用" }
+```
+
+**解封设备:**
+
+```
+DELETE /api/devices/{deviceId}/ban
+```
+
+**获取封禁列表:**
+
+```
+GET /api/devices/banned
+```
+
+响应：
+
+```json
+{
+  "total": 1,
+  "banned": [
+    { "deviceId": "device-001", "bannedAt": "2026-06-30T10:00:00", "bannedBy": "admin", "reason": "违规使用" }
+  ]
+}
+```
+
+### 7.4 Token 管理
 
 **生成 Token:**
 
@@ -658,6 +806,19 @@ grep -i error outview.log
 
 客户端输出直接显示在控制台。
 
+### 8.5 无法登录管理后台
+
+**检查步骤:**
+
+1. **确认账号密码:** 默认 `admin / outview123`；若已在 `application.yml` 的 `outview-admin.users` 修改，请使用新凭据。
+2. **确认修改已生效:** 修改 yml 后需重启服务端。
+3. **API 返回 401:** 说明未携带认证头。使用 `curl` 时加 `-u 用户名:密码`。
+4. **浏览器一直弹登录框:** 清除浏览器缓存/已保存的 Basic 凭据后重试。
+
+### 8.6 设备无法注册（提示被封禁）
+
+若客户端日志出现 `Device is banned. Contact administrator.`，说明该设备 ID 在黑名单中。在管理后台"封禁设备"卡片中解封，或调用 `DELETE /api/devices/{deviceId}/ban`。
+
 ---
 
 ## 9. 安全建议
@@ -678,6 +839,11 @@ grep -i error outview.log
 3. **使用强 Token:**
    - Token 应足够长且随机
    - 定期更换 Token
+
+4. **修改管理后台默认密码:**
+   - 默认 `admin / outview123` 仅供初次登录
+   - 在 `application.yml` 的 `outview-admin.users` 中改为强密码
+   - 管理后台仅建议在内网或经反向代理加 HTTPS 后暴露
 
 ### 9.2 服务器安全
 
@@ -748,24 +914,39 @@ netstat -tlnp | grep 7000
 
 ### Q4: 如何查看当前有多少客户端连接？
 
-访问管理后台 `http://服务器IP:8080/index.html` 或调用 API:
+访问管理后台 `http://服务器IP:8080/index.html`（需登录）或调用 API:
 ```bash
-curl http://服务器IP:8080/api/devices
+curl -u admin:outview123 http://服务器IP:8080/api/devices
 ```
 
 ### Q5: 如何强制断开某个客户端？
 
 ```bash
-curl -X DELETE http://服务器IP:8080/api/devices/设备ID
+curl -u admin:outview123 -X DELETE http://服务器IP:8080/api/devices/设备ID
 ```
 
 或在管理后台点击"断开"按钮。
 
-### Q6: 服务端支持多少并发连接？
+### Q6: 如何彻底封禁 / 解封一个设备？
+
+封禁（踢下线并拒绝重连）：
+```bash
+curl -u admin:outview123 -X POST http://服务器IP:8080/api/devices/设备ID/ban \
+  -H "Content-Type: application/json" -d '{"reason":"违规使用"}'
+```
+
+解封：
+```bash
+curl -u admin:outview123 -X DELETE http://服务器IP:8080/api/devices/设备ID/ban
+```
+
+也可在管理后台"彻底封禁"按钮与"封禁设备"卡片中操作。
+
+### Q7: 服务端支持多少并发连接？
 
 理论上支持 500+ 并发连接，实际性能取决于服务器硬件配置。
 
-### Q7: Token 过期后怎么办？
+### Q8: Token 过期后怎么办？
 
 重新生成新的 Token，并在客户端更新配置。
 
@@ -805,6 +986,8 @@ curl -X DELETE http://服务器IP:8080/api/devices/设备ID
 | 6 | HEARTBEAT_ACK | 心跳响应 |
 | 3 | DATA | 数据转发 |
 | 4 | ERROR | 错误消息 |
+| 14 | DEVICE_QUERY | 设备码查询（控制端→服务端） |
+| 15 | DEVICE_QUERY_ACK | 设备码查询响应（服务端→控制端，返回对外端口） |
 
 ### C. 联系支持
 
@@ -814,5 +997,5 @@ curl -X DELETE http://服务器IP:8080/api/devices/设备ID
 
 ---
 
-*文档版本: 1.1.0*
-*最后更新: 2026-03-12*
+*文档版本: 1.2.0*
+*最后更新: 2026-07-01*

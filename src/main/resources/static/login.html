@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>outView 管理后台 - 登录</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-box {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            width: 360px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 { font-size: 28px; color: #667eea; font-weight: 700; }
+        .logo p { color: #666; margin-top: 6px; font-size: 14px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 6px; font-size: 14px; color: #333; font-weight: 500; }
+        input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus { border-color: #667eea; }
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+        .btn-login:hover { opacity: 0.9; }
+        .error {
+            background: #fff3f3;
+            border: 1px solid #ffcdd2;
+            color: #c62828;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="logo">
+            <h1>outView</h1>
+            <p>远程桌面管理后台</p>
+        </div>
+        <div id="errorMsg" class="error" style="display:none;">用户名或密码错误</div>
+        <form id="loginForm">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="username" placeholder="请输入用户名" autofocus>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" placeholder="请输入密码">
+            </div>
+            <button type="submit" class="btn-login">登 录</button>
+        </form>
+    </div>
+    <script>
+        // Check if already redirected from failed login
+        if (new URLSearchParams(location.search).get('error')) {
+            document.getElementById('errorMsg').style.display = 'block';
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const credentials = btoa(username + ':' + password);
+
+            try {
+                const res = await fetch('/api/devices', {
+                    headers: { 'Authorization': 'Basic ' + credentials }
+                });
+                if (res.ok) {
+                    // Store credentials for session
+                    sessionStorage.setItem('auth', credentials);
+                    window.location.href = '/index.html';
+                } else {
+                    document.getElementById('errorMsg').style.display = 'block';
+                }
+            } catch(e) {
+                document.getElementById('errorMsg').style.display = 'block';
+            }
+        });
+
+        // Enter key support
+        document.getElementById('password').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+        });
+    </script>
+</body>
+</html>

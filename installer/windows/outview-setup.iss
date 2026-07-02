@@ -20,7 +20,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 ; 安装包输出路径
-OutputDir=..\release\installer
+OutputDir=D:\claudeCodeSpace\java\out-view\release\installer
 OutputBaseFilename=outview-{#AppVersion}-setup
 ; 压缩
 Compression=lzma2/ultra64
@@ -34,7 +34,6 @@ WizardStyle=modern
 MinVersion=6.1
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
@@ -43,13 +42,12 @@ Name: "autostart"; Description: "开机自动启动被控服务（推荐被控�
 
 [Files]
 ; GUI 主程序
-Source: "..\release\outview-1.2.0\client\windows\outview-client.exe"; DestDir: "{app}"; DestName: "outview.exe"; Flags: ignoreversion
+Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\client\windows\outview-client.exe"; DestDir: "{app}"; DestName: "outview.exe"; Flags: ignoreversion
 ; WebRTC Sidecar
-Source: "..\release\outview-1.2.0\webrtc-sidecar\windows\webrtc-sidecar.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\webrtc-sidecar\windows\webrtc-sidecar.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; 用户手册
-Source: "..\release\outview-1.2.0\USER_MANUAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "..\release\outview-1.2.0\webrtc-user-guide.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "..\release\outview-1.2.0\webrtc-troubleshooting.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\USER_MANUAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
 ; 开始菜单
@@ -77,6 +75,8 @@ Filename: "taskkill"; Parameters: "/f /im outview.exe"; Flags: runhidden; RunOnc
 [Code]
 // 安装前检查是否已有旧版本在运行
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
   if CurStep = ssInstall then begin
     // 停止旧版本进程

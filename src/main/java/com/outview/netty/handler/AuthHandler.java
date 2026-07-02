@@ -5,6 +5,7 @@ import com.alibaba.fastjson.JSONObject;
 import com.outview.entity.ClientSession;
 import com.outview.protocol.ProtocolConstants;
 import com.outview.protocol.ProtocolMessage;
+import com.outview.service.BanService;
 import com.outview.service.DataPortService;
 import com.outview.service.PortMappingService;
 import com.outview.service.SessionStore;
@@ -29,13 +30,16 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
     private final SessionStore sessionStore;
     private final PortMappingService portMappingService;
     private final DataPortService dataPortService;
+    private final BanService banService;
 
     public AuthHandler(SessionStore sessionStore,
                       PortMappingService portMappingService,
-                      DataPortService dataPortService) {
+                      DataPortService dataPortService,
+                      BanService banService) {
         this.sessionStore = sessionStore;
         this.portMappingService = portMappingService;
         this.dataPortService = dataPortService;
+        this.banService = banService;
     }
 
     @Override
@@ -65,8 +69,13 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
                 return;
             }
 
-            // TODO: 校验 Token 合法性
-            // 这里简化处理，实际应该从数据库或配置中验证
+            // 封禁检查：被封禁的设备直接拒绝并关闭连接
+            if (banService.isBanned(deviceId)) {
+                log.warn("Banned device attempted to connect: deviceId={}", deviceId);
+                sendErrorResponse(ctx, "Device is banned. Contact administrator.");
+                ctx.close();
+                return;
+            }
 
             // 分配对外端口
             int externalPort = portMappingService.allocatePort(deviceId, localPort);

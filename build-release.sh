@@ -84,25 +84,52 @@ v1.2.0 引入了 WebRTC P2P 传输优化，需要配合 WebRTC Sidecar 使用：
 
 ## 配置文件
 
-创建 `config.txt` 文件（参考 `config.txt.example`）：
+在客户端同目录下创建 `config.txt` 文件（参考 `config.txt.example`）：
 
+```ini
+# 自定义本地服务端口（重要！）
+local-port=3389
+
+# 其他可选配置
+host=120.27.214.55
+port=7000
+heartbeat=30
 ```
-server=your-server.com:7000
-token=your-token
-local_port=3389
-```
+
+**支持情况**：
+- **GUI 版本**：支持读取 `local-port` 配置（v1.2.0+）
+- **CLI 版本**：完全支持所有配置项
+
+**配置文件搜索路径**：
+1. 可执行文件所在目录
+2. 当前工作目录
+
+**支持的文件名**：`config.txt`, `config.ini`, `outview.conf`, `outview.ini`
 
 ## 使用方法
 
-### Windows
+### Windows GUI
 ```cmd
+# 双击运行，会自动读取 config.txt
 outview-client.exe
+```
+
+### Windows CLI
+```cmd
+# 自动查找配置文件
+outview-client.exe
+
+# 或指定配置文件
+outview-client.exe -config config.txt
+
+# 或使用命令行参数
+outview-client.exe -host 120.27.214.55 -device-id TEST01 -token mytoken -local-port 8080
 ```
 
 ### Linux/macOS
 ```bash
 chmod +x outview-client
-./outview-client
+./outview-client -config config.txt
 ```
 
 详细使用说明请参考 `../USER_MANUAL.md`
@@ -146,19 +173,29 @@ EOF
 # Create config example
 cat > "${RELEASE_DIR}/client/config.txt.example" << 'EOF'
 # outView Client Configuration
+# 配置文件支持：CLI 版本完全支持，GUI 版本支持 local-port 配置
 
-# 服务器地址和端口
-server=your-server.com:7000
+# 服务器地址（可选，GUI 版本使用内置服务器地址）
+host=120.27.214.55
+port=7000
 
-# 认证 Token
-token=your-token-here
+# 设备认证（可选，GUI 版本自动生成设备码）
+device-id=YOUR-DEVICE-ID
+token=outview-YOUR-DEVICE-ID
 
-# 本地 RDP 端口（默认 3389）
-local_port=3389
+# 本地服务端口（重要！GUI 版本会读取此配置）
+# - RDP 远程桌面: local-port=3389
+# - SSH: local-port=22
+# - HTTP: local-port=80
+# - 自定义服务: local-port=8080
+local-port=3389
 
-# WebRTC 配置（可选）
-webrtc_enabled=true
-stun_servers=stun:stun.l.google.com:19302
+# 心跳间隔（可选，默认 30 秒）
+heartbeat=30
+
+# WebRTC 配置（可选，v1.2.0+）
+# webrtc_enabled=true
+# stun_servers=stun:stun.l.google.com:19302
 # turn_servers=turn:your-turn-server.com:3478
 # turn_username=username
 # turn_password=password

@@ -31,6 +31,7 @@ var Version = "1.2.0"
 
 func main() {
 	a := app.NewWithID("com.outview.client")
+	a.Settings().SetTheme(newChineseTheme(a.Settings().Theme()))
 	w := a.NewWindow("outView 远程桌面")
 	w.Resize(fyne.NewSize(480, 560))
 	w.SetMaster()
@@ -74,6 +75,7 @@ type mainUI struct {
 	connTypeLabel    *widget.Label
 	connLatencyLabel *widget.Label
 	connTrafficLabel *widget.Label
+	webrtcStateLabel *widget.Label
 	statusTicker     *time.Ticker
 
 	codeEntry  *widget.Entry
@@ -158,11 +160,13 @@ func (u *mainUI) buildHostTab() fyne.CanvasObject {
 	u.connTypeLabel = widget.NewLabelWithStyle("连接类型: -", fyne.TextAlignLeading, fyne.TextStyle{})
 	u.connLatencyLabel = widget.NewLabelWithStyle("延迟: -", fyne.TextAlignLeading, fyne.TextStyle{})
 	u.connTrafficLabel = widget.NewLabelWithStyle("流量: -", fyne.TextAlignLeading, fyne.TextStyle{})
+	u.webrtcStateLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 
 	statusBox := container.NewVBox(
 		u.connTypeLabel,
 		u.connLatencyLabel,
 		u.connTrafficLabel,
+		u.webrtcStateLabel,
 	)
 
 	return container.NewVBox(
@@ -187,13 +191,25 @@ func (u *mainUI) startHostService() {
 		return
 	}
 
+	// 尝试从配置文件加载配置
 	cfg := client.DefaultConfig()
+	if configPath := client.FindConfigFile(); configPath != "" {
+		if fileCfg, err := client.LoadFromFile(configPath); err == nil {
+			cfg = fileCfg
+		}
+	}
+
+	// 覆盖必要的字段（优先使用设备码）
 	cfg.ServerHost = devicecode.ServerHost
 	cfg.ServerPort = devicecode.ServerPort
 	cfg.DeviceID = u.myCode
 	cfg.Token = "outview-" + u.myCode
-	cfg.LocalPort = 3389
 	cfg.AutoReconnect = true
+
+	// 如果配置文件中没有指定 LocalPort，则使用默认的 3389
+	if cfg.LocalPort == 0 {
+		cfg.LocalPort = 3389
+	}
 
 	if u.webrtcSettings.Enabled {
 		wCfg := buildWebRTCConfig(u.webrtcSettings)
@@ -221,6 +237,10 @@ func (u *mainUI) startHostService() {
 			u.hostStatus.SetText(fmt.Sprintf("❌ 注册失败: %v", err))
 		}
 	}
+	u.hostClient.OnWebRTCStateChange = func(state string) {
+		label := webrtcStateText(state)
+		u.webrtcStateLabel.SetText(label)
+	}
 
 	u.hostStatus.SetText("● 连接服务器中...")
 	if err := u.hostClient.Start(); err != nil {
@@ -246,6 +266,7 @@ func (u *mainUI) stopHostService() {
 	u.connTypeLabel.SetText("连接类型: -")
 	u.connLatencyLabel.SetText("延迟: -")
 	u.connTrafficLabel.SetText("流量: -")
+	u.webrtcStateLabel.SetText("")
 }
 
 func (u *mainUI) updateConnectionStatus() {
@@ -260,11 +281,33 @@ func (u *mainUI) updateConnectionStatus() {
 			u.connTrafficLabel.SetText("流量: -")
 			continue
 		}
-		u.connTypeLabel.SetText("连接类型: TCP")
+
+		connType := "TCP 中继"
+		if u.hostClient.IsUsingWebRTC() {
+			connType = "WebRTC P2P"
+		}
+		u.connTypeLabel.SetText("连接类型: " + connType)
 		u.connLatencyLabel.SetText("延迟: < 50ms")
-		u.connTrafficLabel.SetText("流量: 0 KB")
+
+		stats := u.hostClient.GetTrafficStats()
+		u.connTrafficLabel.SetText(fmt.Sprintf("流量: ↑%s ↓%s",
+			formatBytes(stats.BytesSent), formatBytes(stats.BytesRecv)))
 	}
 }
+
+func formatBytes(b int64) string {
+	switch {
+	case b >= 1024*1024*1024:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1024*1024*1024))
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 
 // ─────────────────────────────────────────────
 // 控制端 Tab
@@ -504,4 +547,26 @@ func cleanCode(s string) string {
 func launchRDP(target string) error {
 	cmd := exec.Command("mstsc", "/v:"+target)
 	return cmd.Start()
+}
+
+// webrtcStateText maps WebRTC connection state strings to Chinese display text.
+func webrtcStateText(state string) string {
+	switch state {
+	case "GatheringICE":
+		return "WebRTC: 正在收集 ICE 候选..."
+	case "Connecting":
+		return "WebRTC: 正在建立 P2P 连接..."
+	case "WebRTCConnected":
+		return "WebRTC: P2P 连接已建立 ✅"
+	case "WebRTCFailed":
+		return "WebRTC: P2P 失败，使用 TCP 中继"
+	case "WebRTCReconnecting":
+		return "WebRTC: 正在重连 P2P..."
+	case "TCPRelay":
+		return "WebRTC: 使用 TCP 中继"
+	case "Idle", "Closed", "Closing":
+		return ""
+	default:
+		return ""
+	}
 }

@@ -91,12 +91,17 @@ type Client struct {
 	// TCP reconnect (does not include the initial connection). Atomic.
 	webrtcRecoveryCount atomic.Int64
 
+	// Traffic counters (atomic, bytes).
+	bytesSent atomic.Int64
+	bytesRecv atomic.Int64
+
 	// Callbacks
-	OnStateChange       func(old, new State)
-	OnRegisterResult    func(success bool, externalPort int, err error)
-	OnDataReceived      func(data []byte)
-	OnError             func(err error)
-	OnDeviceQueryResult func(resp *protocol.DeviceQueryResponse)
+	OnStateChange         func(old, new State)
+	OnRegisterResult      func(success bool, externalPort int, err error)
+	OnDataReceived        func(data []byte)
+	OnError               func(err error)
+	OnDeviceQueryResult   func(resp *protocol.DeviceQueryResponse)
+	OnWebRTCStateChange   func(state string)
 }
 
 // NewClient creates a new client
@@ -590,6 +595,7 @@ func (c *Client) forwardToLocal(connectionID string, data []byte) {
 	}
 
 	logger.Debug("Writing %d bytes to local RDP for connectionId=%s", len(data), connectionID)
+	c.bytesRecv.Add(int64(len(data)))
 
 	if _, err := connObj.conn.Write(data); err != nil {
 		if c.OnError != nil {
@@ -657,6 +663,7 @@ func (c *Client) readFromLocal(connectionID string, connObj *connectionConn) {
 		}
 
 		msg := protocol.NewDataMessageWithConnectionID(connectionID, buf[:n])
+		c.bytesSent.Add(int64(n))
 		if err := c.sendRaw(msg); err != nil {
 			if c.OnError != nil {
 				c.OnError(fmt.Errorf("failed to send response: %w", err))
@@ -721,6 +728,27 @@ func (c *Client) handleError(msg *protocol.Message) {
 // SendMessage sends an arbitrary protocol message (used for device queries etc.)
 func (c *Client) SendMessage(msg *protocol.Message) error {
 	return c.sendRaw(msg)
+}
+
+// TrafficStats holds cumulative traffic counters.
+type TrafficStats struct {
+	BytesSent int64
+	BytesRecv int64
+}
+
+// GetTrafficStats returns cumulative bytes sent and received since the client started.
+func (c *Client) GetTrafficStats() TrafficStats {
+	return TrafficStats{
+		BytesSent: c.bytesSent.Load(),
+		BytesRecv: c.bytesRecv.Load(),
+	}
+}
+
+// IsUsingWebRTC returns true when data is actively routed through WebRTC P2P.
+func (c *Client) IsUsingWebRTC() bool {
+	c.webrtcMu.RLock()
+	defer c.webrtcMu.RUnlock()
+	return c.usingWebRTC
 }
 
 // StartReadLoop starts a single read iteration (for one-shot query connections).
@@ -799,6 +827,13 @@ func (c *Client) initiateWebRTCOffer(mgr *clientwebrtc.Manager) {
 		}
 		if err := c.sendRaw(completeMsg); err != nil {
 			logger.Error("Failed to send ICE complete: %v", err)
+		}
+	})
+
+	// Wire WebRTC state change callback for GUI progress display.
+	mgr.SetOnStateChange(func(to clientwebrtc.ConnectionState) {
+		if cb := c.OnWebRTCStateChange; cb != nil {
+			cb(to.String())
 		}
 	})
 
