@@ -253,21 +253,35 @@
         <!-- 端口映射 -->
         <div class="card">
             <div class="card-header">
-                <h2>端口映射</h2>
+                <h2>端口映射（固定）</h2>
+                <button class="btn btn-primary" onclick="loadMappings()">刷新</button>
             </div>
             <div class="card-body">
+                <!-- 预设固定端口表单 -->
+                <div style="margin-bottom:15px;padding:12px;background:#f8f9fa;border-radius:4px;">
+                    <strong>预设固定端口</strong>
+                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+                        <input id="presetDeviceId" type="text" placeholder="设备ID" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;width:140px;">
+                        <input id="presetPort" type="number" placeholder="外网端口" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;width:120px;">
+                        <input id="presetTarget" type="number" placeholder="目标端口(默认3389)" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;width:160px;">
+                        <button class="btn btn-primary" onclick="presetMapping()">添加</button>
+                    </div>
+                    <p style="margin-top:6px;color:#666;font-size:12px;">设备未上线也可预设，客户端上线时自动复用此固定端口（重连/重启端口不变）</p>
+                </div>
                 <table id="mappingTable">
                     <thead>
                         <tr>
                             <th>对外端口</th>
                             <th>设备ID</th>
                             <th>目标端口</th>
-                            <th>创建时间</th>
+                            <th>状态</th>
+                            <th>最后上线</th>
                             <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="mappingBody"></tbody>
                 </table>
+                <div id="mappingEmpty" class="empty" style="display:none;">暂无端口映射</div>
             </div>
         </div>
     </div>
@@ -368,18 +382,25 @@
                 document.getElementById('mappingCount').textContent = data.total || 0;
 
                 const body = document.getElementById('mappingBody');
+                const empty = document.getElementById('mappingEmpty');
                 if (data.mappings && data.mappings.length > 0) {
                     body.innerHTML = data.mappings.map(m => `
                         <tr>
                             <td><code id="port-${m.deviceId}">${m.externalPort}</code></td>
                             <td>${m.deviceId}</td>
                             <td>${m.targetPort}</td>
-                            <td>${m.createTime ? new Date(m.createTime).toLocaleString() : '-'}</td>
+                            <td>${m.online ? '<span class="status-online">在线</span>' : '<span class="status-offline">离线</span>'}</td>
+                            <td>${m.lastOnlineTime ? new Date(m.lastOnlineTime).toLocaleString() : '-'}</td>
                             <td>
                                 <button class="btn btn-primary btn-sm" onclick="editMapping('${m.deviceId}', ${m.externalPort})">修改端口</button>
+                                <button class="btn btn-danger btn-sm" style="margin-left:4px;" onclick="deleteMapping('${m.deviceId}', ${m.externalPort})">删除</button>
                             </td>
                         </tr>
                     `).join('');
+                    empty.style.display = 'none';
+                } else {
+                    body.innerHTML = '';
+                    empty.style.display = 'block';
                 }
             } catch (e) {
                 console.error('Failed to load mappings:', e);
@@ -411,6 +432,57 @@
                     loadDevices();
                 } else {
                     alert('更新失败：' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        // 预设固定端口
+        async function presetMapping() {
+            const deviceId = document.getElementById('presetDeviceId').value.trim();
+            const portStr = document.getElementById('presetPort').value.trim();
+            const targetStr = document.getElementById('presetTarget').value.trim();
+            if (!deviceId) { alert('请输入设备ID'); return; }
+            const externalPort = parseInt(portStr, 10);
+            if (isNaN(externalPort) || externalPort < 1 || externalPort > 65535) { alert('外网端口无效，请输入 1-65535'); return; }
+            const targetPort = targetStr ? parseInt(targetStr, 10) : 3389;
+            if (isNaN(targetPort) || targetPort < 1 || targetPort > 65535) { alert('目标端口无效'); return; }
+
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/mappings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ deviceId: deviceId, externalPort: externalPort, targetPort: targetPort })
+                });
+                if (!res) return;
+                const data = await res.json();
+                if (data.success) {
+                    alert('已预设固定端口：设备 ' + data.deviceId + ' -> 端口 ' + data.externalPort);
+                    document.getElementById('presetDeviceId').value = '';
+                    document.getElementById('presetPort').value = '';
+                    document.getElementById('presetTarget').value = '';
+                    loadMappings();
+                } else {
+                    alert('预设失败：' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        // 删除固定端口映射
+        async function deleteMapping(deviceId, port) {
+            if (!confirm('确定要删除设备 ' + deviceId + ' 的固定端口映射（端口 ' + port + '）吗？\n删除后该设备下次上线将重新分配端口。')) return;
+            try {
+                const res = await apiFetch(API_BASE + '/api/devices/mappings/' + deviceId, { method: 'DELETE' });
+                if (!res) return;
+                const data = await res.json();
+                if (data.success) {
+                    loadMappings();
+                    loadDevices();
+                } else {
+                    alert('删除失败：' + (data.error || '未知错误'));
                 }
             } catch (e) {
                 alert('请求失败: ' + e.message);

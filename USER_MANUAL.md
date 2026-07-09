@@ -1,209 +1,71 @@
-# outView 用户使用手册
+# outView 系统使用手册
 
-## v1.2.0 产品化版本快速指南
+## 系统简介
 
-### 零配置使用（推荐）
+outView 是一款轻量级、高性能的远程桌面内网穿透系统，支持 TCP 和 WebRTC 双传输模式。通过公网服务器中转，让您从外部网络安全访问内网电脑的远程桌面服务（RDP）。
 
-**被控端（家庭电脑）：**
-1. 安装 `outview-1.2.0-setup.exe`
-2. 启动 outView，查看您的 6 位设备码（如 `123 456`）
-3. 点击"启动被控服务"
-4. 将设备码告诉对方
+**v1.2.0 新特性**: WebRTC P2P 传输，延迟降低 30-50%，弱网稳定性显著提升。
 
-**控制端（外出电脑）：**
-1. 安装 `outview-1.2.0-setup.exe`
-2. 启动 outView，切换到"控制端（连接）"标签
-3. 输入对方的设备码
-4. 点击"连接"，自动打开远程桌面
+**v1.2.0 迭代新特性**: 固定外网映射端口（客户端重连/服务端重启端口不变）；断网重连稳定性修复；被控端默认无限重连。
 
-**WebRTC 配置（可选）：**
-- 切换到"WebRTC 配置"标签
-- 配置 STUN/TURN 服务器以优化 P2P 连接
-- 选择传输策略（直连优先/仅中继）
-- 点击"保存配置"，重启被控服务生效
+## 固定端口映射
 
-**系统托盘：**
-- 关闭窗口自动最小化到托盘
-- 右键托盘图标：显示/隐藏窗口、退出
+v1.2.0 起，设备首次上线时分配的外网端口会持久化到数据库，此后客户端重连或服务端重启，端口保持不变。
 
----
+- **自动固定**：设备首次连接自动分配并固化端口，无需配置
+- **管理员预设**：在管理后台「端口映射」卡片，输入设备ID和端口，点击「添加」即可为设备预设固定端口（设备未上线也可预设）
+- **修改端口**：在端口映射列表点击「修改端口」可调整固定端口
+- **删除映射**：点击「删除」释放端口，设备下次上线将重新分配
 
-## 传统部署方式（需自建服务器）
+> 端口范围默认 6000-6500（可在 `application.yml` 的 `outview.data-port-start` / `data-port-end` 配置）。
 
-以下内容适用于需要自建服务器的场景。
 
-## 目录
+## 快速开始
 
-1. [系统概述](#1-系统概述)
-2. [快速开始](#2-快速开始)
-3. [服务端部署](#3-服务端部署)
-4. [客户端配置](#4-客户端配置)
-5. [远程桌面连接](#5-远程桌面连接)
-6. [管理后台（登录 / 设备封禁 / 端口映射）](#6-管理后台)
-7. [API 接口文档](#7-api-接口文档)
-8. [故障排除](#8-故障排除)
-9. [安全建议](#9-安全建议)
-10. [常见问题](#10-常见问题)
+### 1. 服务端部署（公网服务器）
 
----
+#### 环境要求
+- 公网 IP 或域名
+- JDK 8+
+- 开放端口: 7000（控制）、6001-6100（数据）
 
-## 1. 系统概述
-
-### 1.1 产品简介
-
-outView 是一款远程桌面内网穿透系统，允许您从外部网络访问家庭或办公室内的电脑。通过该系统，您可以：
-
-- 在外出时远程访问家庭电脑
-- 访问公司内网的远程桌面服务
-- 无需公网 IP 即可实现远程连接
-
-### 1.2 系统架构
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         外出电脑 (用户)                           │
-│  ┌─────────────────┐                                              │
-│  │ 远程桌面连接     │                                              │
-│  │ mstsc           │                                              │
-│  └─────────────────┘                                              │
-└──────────────────────────────────────────────────────────────────┘
-                             │
-                             │ RDP 协议
-                             ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                      outView Server (公网服务器)                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐    │
-│  │ 数据端口      │    │ 数据转发     │    │ 控制端口 (7000)  │    │
-│  │ 6000-6500    │    │ ProxyHandler │    │ AuthHandler     │    │
-│  └──────────────┘    └──────────────┘    └──────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-                                                 │
-                                                 │ 自定义协议
-                                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                      家庭电脑 (内网)                              │
-│  ┌──────────────┐    ┌──────────────┐                            │
-│  │ RDP 服务     │◄───│ outView      │                            │
-│  │ :3389        │    │ Client       │                            │
-│  └──────────────┘    └──────────────┘                            │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 1.3 技术规格
-
-| 项目 | 规格 |
-|------|------|
-| 协议 | 自定义二进制协议 + RDP |
-| 控制端口 | 7000 |
-| 数据端口范围 | 6000-6500 |
-| 心跳间隔 | 30 秒 |
-| 心跳超时 | 90 秒 |
-| 支持客户端数 | 最多 500 个并发 |
-
----
-
-## 2. 快速开始
-
-### 2.1 环境要求
-
-| 组件 | 要求 |
-|------|------|
-| Java | JDK 8 或更高版本 |
-| 操作系统 | Windows / Linux / macOS |
-| 网络 | 需要一台具有公网 IP 的服务器 |
-
-### 2.2 五分钟快速部署
-
-**步骤 1: 编译打包**
+#### 安装步骤
 
 ```bash
-# Windows
-set JAVA_HOME=C:\Program Files\Java\jdk-1.8
-mvn clean package -DskipTests
+# 1. 下载服务端
+wget https://github.com/outview/outview/releases/download/v1.2.0/outview-server-1.2.0.jar
 
-# Linux/Mac
-export JAVA_HOME=/usr/lib/jvm/java-8-openjdk
-mvn clean package -DskipTests
-```
-
-**步骤 2: 启动服务端**
-
-```bash
-java -jar target/outview-server.jar
-```
-
-**步骤 3: 生成 Token**
-
-访问 `http://服务器IP:8080/index.html`，点击"生成新 Token"。
-
-**步骤 4: 启动客户端**
-
-使用Go客户端（推荐）：
-```bash
-outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
-```
-
-或使用配置文件方式，创建 `config.txt`：
-```
-host=your-server.com
-port=7000
-device-id=your-device-id
-token=your-token
-```
-然后双击运行 `outview-client.exe`
-
-**步骤 5: 连接远程桌面**
-
-打开远程桌面连接，输入 `服务器IP:分配的端口`（如 `192.168.1.100:6001`）。
-
----
-
-## 3. 服务端部署
-
-### 3.1 配置文件说明
-
-配置文件位置: `src/main/resources/application.yml`
-
-```yaml
+# 2. 创建配置文件
+cat > application.yml <<EOF
 server:
-  port: 8080                    # HTTP 服务端口
+  port: 7000
 
 outview:
-  control-port: 7000            # 客户端注册端口
-  data-port-start: 6000         # 数据端口范围起始
-  data-port-end: 6500           # 数据端口范围结束
-  heartbeat-timeout: 90         # 心跳超时时间（秒）
-  heartbeat-interval: 30        # 心跳间隔（秒）
-  token-expire-days: 30         # Token 有效期（天）
+  data-port-range:
+    start: 6001
+    end: 6100
+  
+  # WebRTC 配置（可选）
+  webrtc:
+    enabled: true
+    sidecar-binary-path: /usr/local/bin/outview-sidecar
+    sidecar-socket-path: /tmp/outview-webrtc.sock
+    
+    # 灰度发布（可选）
+    gray-release:
+      enabled: false
+      percentage: 0  # 0-100
+EOF
 
-logging:
-  level:
-    com.outview: DEBUG          # 日志级别
+# 3. 启动服务
+java -jar outview-server-1.2.0.jar
 ```
 
-### 3.2 启动方式
-
-**前台启动（调试用）:**
+#### 使用 systemd 管理（推荐）
 
 ```bash
-java -jar outview-server.jar
-```
-
-**后台启动（生产环境）:**
-
-```bash
-# Linux
-nohup java -jar outview-server.jar > outview.log 2>&1 &
-
-# 查看日志
-tail -f outview.log
-```
-
-**使用 systemd 服务（推荐）:**
-
-创建服务文件 `/etc/systemd/system/outview.service`:
-
-```ini
+# 创建 systemd 服务
+sudo cat > /etc/systemd/system/outview.service <<EOF
 [Unit]
 Description=outView Server
 After=network.target
@@ -212,790 +74,478 @@ After=network.target
 Type=simple
 User=outview
 WorkingDirectory=/opt/outview
-ExecStart=/usr/bin/java -jar /opt/outview/outview-server.jar
+ExecStart=/usr/bin/java -jar /opt/outview/outview-server-1.2.0.jar
 Restart=on-failure
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-启动服务:
-
-```bash
+# 启动服务
 sudo systemctl daemon-reload
 sudo systemctl enable outview
 sudo systemctl start outview
+
+# 查看状态
+sudo systemctl status outview
 ```
 
-### 3.3 防火墙配置
+### 2. 客户端安装（内网电脑）
 
-**Linux (iptables):**
+#### Windows
 
-```bash
-# 开放必要端口
-iptables -A INPUT -p tcp --dport 8080 -j ACCEPT   # HTTP API
-iptables -A INPUT -p tcp --dport 7000 -j ACCEPT   # 控制端口
-iptables -A INPUT -p tcp --dport 6000:6500 -j ACCEPT  # 数据端口
+1. 下载客户端: `outview-client.exe` 或 `outview-gui.exe`
+2. 双击运行 GUI 版本，或命令行运行 CLI 版本
 
-# 保存规则
-service iptables save
-```
+**GUI 版本**:
+- 填写服务器地址、端口、设备 ID、Token
+- 点击"连接"按钮
+- 查看连接状态（绿色 = WebRTC，橙色 = TCP）
 
-**Linux (firewalld):**
-
-```bash
-firewall-cmd --permanent --add-port=8080/tcp
-firewall-cmd --permanent --add-port=7000/tcp
-firewall-cmd --permanent --add-port=6000-6500/tcp
-firewall-cmd --reload
-```
-
-**Windows:**
-
-```powershell
-netsh advfirewall firewall add rule name="outView-HTTP" dir=in action=allow protocol=TCP localport=8080
-netsh advfirewall firewall add rule name="outView-Control" dir=in action=allow protocol=TCP localport=7000
-netsh advfirewall firewall add rule name="outView-Data" dir=in action=allow protocol=TCP localport=6000-6500
-```
-
----
-
-## 4. 客户端配置
-
-### 4.1 获取 Token
-
-**方式一: 管理后台**
-
-1. 打开浏览器访问 `http://服务器IP:8080/index.html`
-2. 点击"生成新 Token"按钮
-3. 记录显示的 **设备ID** 和 **Token**
-
-**方式二: API 接口**
-
-```bash
-curl -X POST http://服务器IP:8080/api/tokens
-
-# 响应示例
-{
-  "success": true,
-  "deviceId": "a1b2c3d4e5f6g7h8",
-  "token": "x9y8z7w6v5u4t3s2r1q0"
-}
-```
-
-### 4.2 Go 客户端（推荐）
-
-**命令行参数方式:**
-
-```bash
-outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
-```
-
-**配置文件方式:**
-
-创建 `config.txt`（与exe同目录）：
-```
-host=your-server.com
-port=7000
-device-id=your-device-id
-token=your-token
-local-port=3389
-```
-
-双击运行 `outview-client.exe` 即可自动读取配置。
-
-**支持的参数:**
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| -host | 服务器地址 | - |
-| -port | 服务器端口 | 7000 |
-| -device-id | 设备ID | - |
-| -token | 认证密钥 | - |
-| -local-port | 本地服务端口 | 3389 (RDP) |
-| -heartbeat | 心跳间隔(秒) | 30 |
-| -config | 指定配置文件路径 | 自动检测 |
-
-**环境变量支持:**
-
-```bash
-export OUTVIEW_SERVER_HOST=your-server.com
-export OUTVIEW_DEVICE_ID=your-device-id
-export OUTVIEW_TOKEN=your-token
-./outview-client
-```
-
-**Linux 后台运行:**
-
-方式一 —— nohup 简单后台：
-
-```bash
-nohup ./outview-client -host your-server.com -device-id my-device -token secret-token > outview-client.log 2>&1 &
-tail -f outview-client.log
-```
-
-方式二 —— systemd 服务（推荐，开机自启 + 崩溃自动重启）：
-
-创建 `/etc/systemd/system/outview-client.service`：
-
-```ini
-[Unit]
-Description=outView Client
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/outview-client
-ExecStart=/opt/outview-client/outview-client -config /opt/outview-client/config.txt
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用并启动：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable outview-client
-sudo systemctl start outview-client
-sudo systemctl status outview-client      # 查看运行状态
-journalctl -u outview-client -f           # 查看日志
-```
-
-> **说明：** CLI 客户端（`cmd/outview-client`）无图形界面，适合 Linux 服务器/无桌面环境常驻后台。被控端的对外端口由服务端在注册时自动分配，可在管理后台查看或通过"修改端口"调整（见 6.5）。GUI 客户端（Fyne）主要面向 Windows 桌面的零配置场景。
-
-### 4.3 Java 客户端（备用）
-
-**交互式客户端:**
-
-```bash
-java -cp outview-server.jar com.outview.client.OutViewClient
-```
-
-按提示输入:
-- 服务器地址
-- 服务器端口 (默认 7000)
-- 设备ID
-- Token
-- 本地 RDP 端口 (默认 3389)
-
-**测试客户端（自动化）:**
-
-```bash
-java -cp outview-server.jar com.outview.client.OutViewClientTest <服务器IP> 7000 <设备ID> <Token> 3389
-```
-
-### 4.3 客户端日志说明
-
-正常连接日志示例:
-
-```
-====================================
-outView Client Test
-====================================
-Server: 192.168.1.100:7000
-DeviceId: a1b2c3d4e5f6g7h8
-Token: x9y8z7w6v5u4t3s2r1q0
-LocalPort: 3389
-====================================
-
-Connected to server: 192.168.1.100:7000
-Sent register request
-Register response: {"success":true,"deviceId":"a1b2c3d4e5f6g7h8","externalPort":6001}
-Heartbeat #1 sent
-Heartbeat #2 sent
-Test completed successfully!
-```
-
-### 4.4 Windows 客户端安装为服务（可选）
-
-使用 WinSW 将客户端安装为 Windows 服务:
-
-1. 下载 WinSW: https://github.com/winsw/winsw/releases
-2. 创建配置文件 `outview-client.xml`:
-
-```xml
-<service>
-  <id>outview-client</id>
-  <name>outView Client</name>
-  <description>Remote Desktop Tunneling Client</description>
-  <executable>java</executable>
-  <arguments>-cp outview-server.jar com.outview.client.OutViewClient</arguments>
-  <workingdirectory>C:\outview</workingdirectory>
-  <logpath>C:\outview\logs</logpath>
-  <log mode="roll-by-size">
-    <sizeThreshold>10240</sizeThreshold>
-    <keepFiles>8</keepFiles>
-  </log>
-</service>
-```
-
-3. 安装服务:
-
+**CLI 版本**:
 ```cmd
-WinSW.exe install outview-client.xml
-WinSW.exe start outview-client.xml
+outview-client.exe ^
+  --server 203.0.113.1 ^
+  --port 7000 ^
+  --device-id my-pc-001 ^
+  --token your-secret-token ^
+  --local-port 3389
 ```
 
----
+#### Linux
 
-## 5. 远程桌面连接
+```bash
+# 下载客户端
+wget https://github.com/outview/outview/releases/download/v1.2.0/outview-client-linux-amd64
 
-### 5.1 确认客户端状态
+# 添加执行权限
+chmod +x outview-client-linux-amd64
 
-在连接前，请确认:
-
-1. 客户端已成功连接服务器
-2. 管理后台显示设备在线
-3. 已记录分配的对外端口
-
-### 5.2 使用 Windows 远程桌面
-
-1. 按 `Win + R` 打开运行对话框
-2. 输入 `mstsc` 并回车
-3. 在"计算机"字段输入: `服务器IP:对外端口`
-   - 例如: `192.168.1.100:6001`
-4. 点击"连接"
-5. 输入家庭电脑的用户名和密码
-
-### 5.3 使用其他 RDP 客户端
-
-**Mac (Microsoft Remote Desktop):**
-
-1. 从 App Store 安装 Microsoft Remote Desktop
-2. 添加远程资源:
-   - PC 名称: `服务器IP:对外端口`
-   - 用户名: 家庭电脑用户名
-   - 密码: 家庭电脑密码
-
-**Linux (Remmina):**
-
-1. 安装 Remmina: `sudo apt install remmina`
-2. 创建新连接:
-   - 协议: RDP
-   - 服务器: `服务器IP:对外端口`
-   - 用户名/密码: 家庭电脑凭据
-
-### 5.4 连接优化设置
-
-在远程桌面连接中，点击"显示选项"进行优化:
-
-**体验选项卡:**
-- 连接速度: 选择"LAN (10 Mbps 或更高)"
-- 取消勾选"字体平滑"可提高性能
-
-**显示选项卡:**
-- 分辨率: 根据需要调整
-- 全屏时显示连接栏: 建议勾选
-
----
-
-## 6. 管理后台
-
-### 6.1 登录认证
-
-自 v1.2.0 起，管理后台需要登录才能访问（基于 Spring Security HTTP Basic 认证）。
-
-打开浏览器访问: `http://服务器IP:8080/index.html`，未登录时会自动跳转到登录页 `login.html`。
-
-**默认账号：**
-
-| 用户名 | 密码 | 角色 |
-|--------|------|------|
-| admin | outview123 | ADMIN |
-
-> 生产环境请务必修改默认密码，见下方"账号配置"。
-
-**免认证接口：** 仅 `/health` 健康检查接口无需登录，其余 `/`、`/index.html`、`/api/**` 均需认证。
-
-### 6.2 账号配置（多账号）
-
-在 `application.yml` 中配置 `outview-admin.users`，支持配置多个账号（密码明文存储，仅限服务器内网使用）：
-
-```yaml
-outview-admin:
-  users:
-    - username: admin
-      password: your-strong-password    # 修改为强密码
-      role: ADMIN
-    - username: viewer
-      password: view456
-      role: VIEWER
+# 运行
+./outview-client-linux-amd64 \
+  --server 203.0.113.1 \
+  --port 7000 \
+  --device-id my-pc-001 \
+  --token your-secret-token \
+  --local-port 3389
 ```
 
-> 若未配置任何账号，系统会自动创建默认账号 `admin / outview123`。修改配置后需重启服务端生效。
+#### macOS
 
-### 6.3 功能说明
+```bash
+# 下载客户端
+curl -LO https://github.com/outview/outview/releases/download/v1.2.0/outview-client-darwin-amd64
 
-**统计面板:**
-- 在线设备数
-- 总设备数
-- 端口映射数
+# 添加执行权限
+chmod +x outview-client-darwin-amd64
 
-**Token 管理:**
-- 生成新 Token
-- 查看已生成的 Token
-
-**设备管理:**
-- 查看在线设备列表
-- 查看设备状态
-- 强制断开设备（普通断开，允许重连）
-- **彻底封禁设备**（踢下线 + 加入黑名单，重连直接拒绝）
-
-**封禁设备管理:**
-- 查看已封禁设备列表（含封禁时间、操作人、原因）
-- 解封设备（从黑名单移除，允许重新连接）
-
-**端口映射:**
-- 查看所有端口映射（对外端口与设备的对应关系）
-- **修改对外端口**（在线设备可将对外端口改为指定值）
-
-### 6.4 封禁与解封设备
-
-**封禁：** 在设备列表点击"彻底封禁"按钮。封禁后该设备会被立即踢下线，且此后携带相同设备 ID 的注册请求会在 `AuthHandler` 阶段被直接拒绝并关闭连接。封禁记录持久化到数据库（H2/MySQL），重启服务端后依然有效。
-
-**解封：** 在"封禁设备"卡片中点击对应设备的"解封"按钮，即可从黑名单移除。
-
-### 6.5 修改设备对外端口
-
-在端口映射表中点击"修改端口"，输入新的对外端口。系统会停止旧端口的数据监听、在新端口重新启动监听，映射关系随之更新。
-
-> **限制：** 只能修改**当前在线设备**的端口。离线或未注册设备无法预设端口（会返回 `Device not found or not connected`）。若目标端口已被占用，会返回错误提示。
-
-### 6.6 自动刷新
-
-管理后台每 10 秒自动刷新数据。前端在登录后会将凭据以 Basic Auth 头附加到每个 API 请求，可通过页面右上角"退出登录"清除会话。
-
----
-
-## 7. API 接口文档
-
-> **认证说明：** 除 `/health` 外，所有 `/api/**` 接口均需 HTTP Basic 认证。使用 `curl` 时通过 `-u 用户名:密码` 传递凭据，例如 `curl -u admin:outview123 ...`。
-
-### 7.1 健康检查
-
-```
-GET /health
+# 运行
+./outview-client-darwin-amd64 \
+  --server 203.0.113.1 \
+  --port 7000 \
+  --device-id my-pc-001 \
+  --token your-secret-token \
+  --local-port 22  # SSH
 ```
 
-（无需认证）
+### 3. 远程连接（外出电脑）
 
-**响应:**
+#### Windows 远程桌面
+
+1. 打开"远程桌面连接"（mstsc.exe）
+2. 输入: `服务器地址:外部端口`
+   - 例如: `203.0.113.1:6001`
+3. 输入内网电脑的用户名和密码
+4. 连接成功
+
+#### Linux/macOS 使用 rdesktop
+
+```bash
+rdesktop 203.0.113.1:6001
+```
+
+#### 使用 FreeRDP
+
+```bash
+xfreerdp /v:203.0.113.1:6001 /u:username /p:password
+```
+
+## WebRTC 配置
+
+### 启用 WebRTC（客户端）
+
+#### GUI 配置
+
+1. 打开"WebRTC 配置"选项卡
+2. 勾选"启用 WebRTC"
+3. 配置 STUN 服务器（默认已包含 Google STUN）
+4. 可选：配置 TURN 服务器（用于对称 NAT 环境）
+5. 点击"保存"
+
+#### CLI 配置文件
+
+创建 `~/.outview/config.json`:
 
 ```json
 {
-  "status": "UP",
-  "timestamp": 1704067200000
+  "server_host": "203.0.113.1",
+  "server_port": 7000,
+  "device_id": "my-pc-001",
+  "token": "your-secret-token",
+  "local_port": 3389,
+  "webrtc": {
+    "enabled": true,
+    "ice_servers": [
+      {"urls": ["stun:stun.l.google.com:19302"]},
+      {"urls": ["stun:stun.qq.com:3478"]}
+    ],
+    "webrtc_timeout": "8s",
+    "dtls_timeout": "10s",
+    "idle_timeout": "60s"
+  }
 }
 ```
 
-### 7.2 设备管理
+### STUN/TURN 服务器配置
 
-**获取设备列表:**
-
-```
-GET /api/devices
-```
-
-**响应:**
+#### 使用公共 STUN 服务器
 
 ```json
 {
-  "total": 2,
-  "online": 2,
-  "devices": [
+  "ice_servers": [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+    {"urls": ["stun:stun1.l.google.com:19302"]},
+    {"urls": ["stun:stun.qq.com:3478"]}
+  ]
+}
+```
+
+#### 配置 TURN 服务器（企业网络）
+
+```json
+{
+  "ice_servers": [
+    {"urls": ["stun:stun.l.google.com:19302"]},
     {
-      "deviceId": "device-001",
-      "externalPort": 6001,
-      "localPort": 3389,
-      "status": "ONLINE",
-      "lastHeartbeat": "2024-01-01T12:00:00",
-      "createTime": "2024-01-01T11:00:00"
+      "urls": ["turn:your-turn-server.com:3478"],
+      "username": "your-username",
+      "credential": "your-password"
     }
   ]
 }
 ```
 
-**获取单个设备:**
-
-```
-GET /api/devices/{deviceId}
-```
-
-**强制断开设备（允许重连）:**
-
-```
-DELETE /api/devices/{deviceId}
-```
-
-**获取端口映射:**
-
-```
-GET /api/devices/mappings
-```
-
-**修改设备对外端口（仅在线设备）:**
-
-```
-PUT /api/devices/mappings/{deviceId}
-Content-Type: application/json
-
-{ "externalPort": 6010 }
-```
-
-响应（成功）：
-
-```json
-{ "success": true, "deviceId": "device-001", "oldPort": 6001, "newPort": 6010 }
-```
-
-设备离线或端口非法/被占用时返回 `success: false` 及错误信息。
-
-### 7.3 设备封禁
-
-**封禁设备（踢下线 + 加入黑名单）:**
-
-```
-POST /api/devices/{deviceId}/ban
-Content-Type: application/json
-
-{ "reason": "违规使用" }
-```
-
-`reason` 可选，缺省为"管理员封禁"。响应：
-
-```json
-{ "success": true, "deviceId": "device-001", "bannedBy": "admin", "reason": "违规使用" }
-```
-
-**解封设备:**
-
-```
-DELETE /api/devices/{deviceId}/ban
-```
-
-**获取封禁列表:**
-
-```
-GET /api/devices/banned
-```
-
-响应：
-
-```json
-{
-  "total": 1,
-  "banned": [
-    { "deviceId": "device-001", "bannedAt": "2026-06-30T10:00:00", "bannedBy": "admin", "reason": "违规使用" }
-  ]
-}
-```
-
-### 7.4 Token 管理
-
-**生成 Token:**
-
-```
-POST /api/tokens
-Content-Type: application/json
-```
-
-**响应:**
-
-```json
-{
-  "success": true,
-  "deviceId": "a1b2c3d4e5f6g7h8",
-  "token": "x9y8z7w6v5u4t3s2r1q0",
-  "createTime": "2024-01-01T12:00:00.000+00:00"
-}
-```
-
-**查询 Token 状态:**
-
-```
-GET /api/tokens/{deviceId}
-```
-
----
-
-## 8. 故障排除
-
-### 8.1 客户端无法连接服务器
-
-**检查步骤:**
-
-1. **验证服务器运行状态:**
-   ```bash
-   curl http://服务器IP:8080/health
-   ```
-   应返回 `{"status":"UP",...}`
-
-2. **检查防火墙:**
-   ```bash
-   # Linux
-   iptables -L -n | grep 7000
-
-   # Windows
-   netsh advfirewall firewall show rule name="outView-Control"
-   ```
-
-3. **检查网络连通性:**
-   ```bash
-   telnet 服务器IP 7000
-   ```
-
-4. **检查 Token 是否正确:**
-   - 确认设备ID和Token完全匹配
-   - 注意大小写
-
-### 8.2 远程桌面连接失败
-
-**检查步骤:**
-
-1. **确认客户端在线:**
-   - 检查管理后台设备状态
-   - 确认状态为 ONLINE
-
-2. **确认端口正确:**
-   - 使用分配的对外端口（如 6001）
-   - 不是控制端口 7000
-
-3. **确认本地 RDP 服务运行:**
-   - Windows: 服务管理器检查 "Remote Desktop Services"
-   - 确认 RDP 端口为 3389（或自定义端口）
-
-4. **检查数据端口防火墙:**
-   ```bash
-   # 测试数据端口
-   telnet 服务器IP 6001
-   ```
-
-### 8.3 连接频繁断开
-
-**可能原因:**
-
-1. **心跳超时:**
-   - 检查网络稳定性
-   - 确认心跳配置正确
-
-2. **服务器资源不足:**
-   - 检查服务器 CPU、内存使用率
-   - 查看服务器日志
-
-3. **网络问题:**
-   - 使用更稳定的网络连接
-   - 考虑使用有线网络
-
-### 8.4 查看日志
-
-**服务端日志:**
+#### 自建 TURN 服务器（coturn）
 
 ```bash
-# 查看实时日志
-tail -f outview.log
+# 安装 coturn
+sudo apt-get install coturn
 
-# 搜索错误
-grep -i error outview.log
+# 配置 /etc/turnserver.conf
+listening-port=3478
+fingerprint
+lt-cred-mech
+user=testuser:testpass
+realm=yourdomain.com
+external-ip=YOUR_PUBLIC_IP
+
+# 启动
+sudo systemctl start coturn
 ```
 
-**客户端日志:**
+## 连接状态说明
 
-客户端输出直接显示在控制台。
+### GUI 状态指示
 
-### 8.5 无法登录管理后台
-
-**检查步骤:**
-
-1. **确认账号密码:** 默认 `admin / outview123`；若已在 `application.yml` 的 `outview-admin.users` 修改，请使用新凭据。
-2. **确认修改已生效:** 修改 yml 后需重启服务端。
-3. **API 返回 401:** 说明未携带认证头。使用 `curl` 时加 `-u 用户名:密码`。
-4. **浏览器一直弹登录框:** 清除浏览器缓存/已保存的 Basic 凭据后重试。
-
-### 8.6 设备无法注册（提示被封禁）
-
-若客户端日志出现 `Device is banned. Contact administrator.`，说明该设备 ID 在黑名单中。在管理后台"封禁设备"卡片中解封，或调用 `DELETE /api/devices/{deviceId}/ban`。
-
----
-
-## 9. 安全建议
-
-### 9.1 网络安全
-
-1. **使用 TLS 加密:**
-   - 配置 HTTPS
-   - 使用 SSL 证书
-
-2. **限制访问 IP:**
-   ```bash
-   # iptables 限制特定 IP
-   iptables -A INPUT -p tcp --dport 7000 -s 允许的IP -j ACCEPT
-   iptables -A INPUT -p tcp --dport 7000 -j DROP
-   ```
-
-3. **使用强 Token:**
-   - Token 应足够长且随机
-   - 定期更换 Token
-
-4. **修改管理后台默认密码:**
-   - 默认 `admin / outview123` 仅供初次登录
-   - 在 `application.yml` 的 `outview-admin.users` 中改为强密码
-   - 管理后台仅建议在内网或经反向代理加 HTTPS 后暴露
-
-### 9.2 服务器安全
-
-1. **使用非 root 用户运行:**
-   ```bash
-   useradd -r -s /bin/false outview
-   sudo -u outview java -jar outview-server.jar
-   ```
-
-2. **定期更新系统:**
-   ```bash
-   # Ubuntu/Debian
-   apt update && apt upgrade
-
-   # CentOS/RHEL
-   yum update
-   ```
-
-3. **配置日志轮转:**
-   ```bash
-   # /etc/logrotate.d/outview
-   /opt/outview/outview.log {
-       daily
-       rotate 7
-       compress
-       missingok
-       notifempty
-   }
-   ```
-
-### 9.3 客户端安全
-
-1. **保护 Token:**
-   - 不要在公共场所分享 Token
-   - 定期更换 Token
-
-2. **启用 Windows 远程桌面安全:**
-   - 设置强密码
-   - 启用网络级别身份验证 (NLA)
-
----
-
-## 10. 常见问题
-
-### Q1: 服务端启动失败，端口被占用？
-
-**解决:**
-```bash
-# 查找占用端口的进程
-netstat -tlnp | grep 7000
-
-# 或更改配置文件中的端口
-```
-
-### Q2: 客户端显示注册成功，但远程桌面无法连接？
-
-**检查:**
-1. 确认使用正确的对外端口（不是 7000）
-2. 确认本地 RDP 服务正在运行
-3. 确认 Windows 防火墙允许 RDP
-
-### Q3: 连接后画面卡顿？
-
-**优化:**
-1. 在远程桌面设置中降低分辨率
-2. 取消"字体平滑"选项
-3. 检查网络带宽
-
-### Q4: 如何查看当前有多少客户端连接？
-
-访问管理后台 `http://服务器IP:8080/index.html`（需登录）或调用 API:
-```bash
-curl -u admin:outview123 http://服务器IP:8080/api/devices
-```
-
-### Q5: 如何强制断开某个客户端？
-
-```bash
-curl -u admin:outview123 -X DELETE http://服务器IP:8080/api/devices/设备ID
-```
-
-或在管理后台点击"断开"按钮。
-
-### Q6: 如何彻底封禁 / 解封一个设备？
-
-封禁（踢下线并拒绝重连）：
-```bash
-curl -u admin:outview123 -X POST http://服务器IP:8080/api/devices/设备ID/ban \
-  -H "Content-Type: application/json" -d '{"reason":"违规使用"}'
-```
-
-解封：
-```bash
-curl -u admin:outview123 -X DELETE http://服务器IP:8080/api/devices/设备ID/ban
-```
-
-也可在管理后台"彻底封禁"按钮与"封禁设备"卡片中操作。
-
-### Q7: 服务端支持多少并发连接？
-
-理论上支持 500+ 并发连接，实际性能取决于服务器硬件配置。
-
-### Q8: Token 过期后怎么办？
-
-重新生成新的 Token，并在客户端更新配置。
-
----
-
-## 附录
-
-### A. 错误代码表
-
-| 代码 | 说明 |
-|------|------|
-| TYPE_ERROR (4) | 协议错误 |
-| Invalid magic number | 无效的魔数 |
-| Invalid register parameters | 注册参数无效 |
-| No available port | 无可用端口 |
-| Heartbeat timeout | 心跳超时 |
-
-### B. 协议格式
-
-**消息头 (12 字节):**
-
-| 字段 | 长度 | 说明 |
+| 状态 | 颜色 | 说明 |
 |------|------|------|
-| Magic | 4B | 0x4F565753 ("OVWS") |
-| Version | 1B | 协议版本 (1) |
-| Type | 1B | 消息类型 |
-| Length | 4B | Body 长度 |
-| Reserved | 2B | 保留 |
+| WebRTC ✓ | 绿色 | WebRTC P2P 连接已建立，低延迟模式 |
+| WebRTC 重连中... | 黄色 | ICE 连接断开，正在重新协商 |
+| TCP 降级 | 橙色 | WebRTC 失败，已降级到 TCP 中转 |
+| 连接中... | 灰色 | 正在建立连接 |
+| 已断开 | 红色 | 连接已关闭 |
 
-**消息类型:**
+### CLI 日志输出
 
-| 类型值 | 名称 | 说明 |
-|--------|------|------|
-| 1 | REGISTER | 注册请求 |
-| 5 | REGISTER_ACK | 注册响应 |
-| 2 | HEARTBEAT | 心跳请求 |
-| 6 | HEARTBEAT_ACK | 心跳响应 |
-| 3 | DATA | 数据转发 |
-| 4 | ERROR | 错误消息 |
-| 14 | DEVICE_QUERY | 设备码查询（控制端→服务端） |
-| 15 | DEVICE_QUERY_ACK | 设备码查询响应（服务端→控制端，返回对外端口） |
+```
+[INFO] State transition: Idle -> GatheringICE (offer created)
+[INFO] ICE candidate type=host address=192.168.1.100
+[INFO] ICE candidate type=srflx address=203.0.113.1
+[INFO] ICE gathering complete
+[INFO] State transition: GatheringICE -> Connecting (remote description set)
+[INFO] ICE connection state: connected
+[INFO] DataChannel opened
+[INFO] State transition: Connecting -> WebRTCConnected (data channel open)
+```
 
-### C. 联系支持
+## 性能监控
 
-如有问题，请通过以下方式获取支持:
-- 项目地址: [GitHub Repository]
-- 问题反馈: [Issues]
+### 查看实时统计
 
----
+```bash
+# 下载统计工具
+wget https://github.com/outview/outview/releases/download/v1.2.0/webrtc-stats
 
-*文档版本: 1.2.0*
-*最后更新: 2026-07-01*
+# 实时监控
+./webrtc-stats -watch
+
+# JSON 格式输出
+./webrtc-stats -json
+```
+
+### 输出示例
+
+```
+=== outView WebRTC Statistics ===
+Time: 2026-05-17 10:30:00
+
+Summary:
+  Active connections:  5 / 10 total
+  Success rate:        95.0%
+  Fallback rate:       5.0%
+  Avg establish time:  450ms
+  P95 establish time:  800ms
+  Total sent:          1.2 GB
+  Total received:      2.4 GB
+
+Connections:
+  ID                   State        Uptime     Sent         Received     Fallbacks
+  ─────────────────────────────────────────────────────────────────────────────────
+  conn-abc-123         connected    5.2h       245.3 MB     512.1 MB     0
+  conn-def-456         connected    2.1h       102.5 MB     198.7 MB     0
+  conn-ghi-789         tcp-relay    1.5h       89.2 MB      156.3 MB     1
+```
+
+### Grafana 监控（服务端）
+
+配置 Prometheus 抓取指标：
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'outview'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/actuator/prometheus'
+```
+
+导入 Grafana Dashboard（见 `docs/grafana-dashboard.json`）。
+
+## 常见使用场景
+
+### 场景 1: 家庭远程办公
+
+**需求**: 从公司访问家里的 Windows 电脑
+
+**配置**:
+1. 家里电脑运行 outview-client
+2. 公司电脑使用 mstsc 连接
+3. 启用 WebRTC 降低延迟
+
+**预期效果**:
+- 延迟: 20-50ms（WebRTC）vs 50-100ms（TCP）
+- 带宽: 1-5 Mbps（取决于屏幕分辨率）
+
+### 场景 2: 企业内网穿透
+
+**需求**: 外出员工访问公司内网服务器
+
+**配置**:
+1. 内网服务器运行 outview-client
+2. 配置 TURN 服务器（企业防火墙严格）
+3. 启用灰度发布（10% → 50% → 100%）
+
+**安全建议**:
+- 使用强 Token（32+ 字符随机字符串）
+- 启用 SSL/TLS 加密
+- 配置防火墙白名单
+
+### 场景 3: 多台设备管理
+
+**需求**: 管理多台内网设备（服务器、NAS、路由器）
+
+**配置**:
+1. 每台设备运行 outview-client，使用不同 device-id
+2. 服务端自动分配不同外部端口
+3. 使用 GUI 客户端管理多个连接
+
+**示例**:
+```
+设备 1 (my-pc-001)    → 203.0.113.1:6001
+设备 2 (my-nas-002)   → 203.0.113.1:6002
+设备 3 (my-router-003) → 203.0.113.1:6003
+```
+
+## 故障排查
+
+### 连接失败
+
+**症状**: 客户端显示"连接失败"
+
+**排查步骤**:
+1. 检查服务器地址和端口是否正确
+2. 检查 Token 是否匹配
+3. 检查服务器防火墙是否开放 7000 端口
+4. 查看服务器日志: `journalctl -u outview -f`
+
+### WebRTC 无法建立
+
+**症状**: 状态显示"TCP 降级"
+
+**排查步骤**:
+1. 运行调试工具: `./tools/webrtc-debug.sh`
+2. 检查 STUN 服务器是否可达
+3. 检查 NAT 类型（对称 NAT 需要 TURN）
+4. 查看客户端日志: `OUTVIEW_LOG_LEVEL=debug ./outview-client`
+
+详见 [故障排查指南](webrtc-troubleshooting.md)。
+
+### 性能问题
+
+**症状**: 延迟高、卡顿
+
+**优化建议**:
+1. 启用 WebRTC（延迟降低 30-50%）
+2. 降低 RDP 分辨率和色深
+3. 关闭 RDP 桌面背景和动画
+4. 检查网络带宽（建议 > 2 Mbps）
+
+## 安全建议
+
+### Token 管理
+
+1. **使用强 Token**
+   ```bash
+   # 生成 32 字符随机 Token
+   openssl rand -base64 32
+   ```
+
+2. **定期轮换 Token**
+   - 建议每 90 天更换一次
+   - 离职员工立即撤销 Token
+
+3. **不要在日志中输出 Token**
+   - 客户端日志会自动脱敏
+   - 服务端日志仅记录 Token 哈希
+
+### 网络安全
+
+1. **启用 SSL/TLS**
+   ```yaml
+   server:
+     ssl:
+       enabled: true
+       key-store: classpath:keystore.p12
+       key-store-password: changeit
+       key-store-type: PKCS12
+   ```
+
+2. **配置防火墙**
+   ```bash
+   # 只允许特定 IP 访问
+   sudo ufw allow from 203.0.113.0/24 to any port 7000
+   sudo ufw allow from 203.0.113.0/24 to any port 6001:6100
+   ```
+
+3. **使用 VPN 叠加**
+   - outView + WireGuard/OpenVPN
+   - 双重加密保护
+
+### 审计日志
+
+启用详细审计日志：
+
+```yaml
+logging:
+  level:
+    com.outview: INFO
+  file:
+    name: /var/log/outview/audit.log
+    max-size: 100MB
+    max-history: 30
+```
+
+## 高级配置
+
+### 自定义端口范围
+
+```yaml
+outview:
+  data-port-range:
+    start: 10000
+    end: 10100
+```
+
+### 连接超时配置
+
+```yaml
+outview:
+  connection-timeout: 30s
+  idle-timeout: 300s
+```
+
+### WebRTC 高级配置
+
+```yaml
+webrtc:
+  enabled: true
+  ice-transport-policy: all  # all | relay
+  webrtc-timeout: 8s
+  dtls-timeout: 10s
+  idle-timeout: 60s
+```
+
+### 灰度发布配置
+
+```yaml
+webrtc:
+  gray-release:
+    enabled: true
+    percentage: 50  # 50% 设备使用 WebRTC
+```
+
+## 升级指南
+
+### 从 v1.0.0 升级到 v1.2.0
+
+1. **备份配置文件**
+   ```bash
+   cp application.yml application.yml.bak
+   ```
+
+2. **停止服务**
+   ```bash
+   sudo systemctl stop outview
+   ```
+
+3. **替换 JAR 文件**
+   ```bash
+   mv outview-server-1.2.0.jar /opt/outview/
+   ```
+
+4. **更新配置文件**（添加 WebRTC 配置）
+
+5. **启动服务**
+   ```bash
+   sudo systemctl start outview
+   ```
+
+6. **验证升级**
+   ```bash
+   curl http://localhost:7000/actuator/health
+   ```
+
+### 客户端升级
+
+直接替换可执行文件，配置文件向后兼容。
+
+## 技术支持
+
+- **文档**: https://github.com/outview/outview/tree/main/docs
+- **Issues**: https://github.com/outview/outview/issues
+- **讨论**: https://github.com/outview/outview/discussions
+
+## 许可证
+
+MIT License - 详见 LICENSE 文件

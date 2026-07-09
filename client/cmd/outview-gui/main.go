@@ -205,6 +205,7 @@ func (u *mainUI) startHostService() {
 	cfg.DeviceID = u.myCode
 	cfg.Token = "outview-" + u.myCode
 	cfg.AutoReconnect = true
+	cfg.MaxRetries = 0 // 被控端无限重连，保证常驻在线
 
 	// 如果配置文件中没有指定 LocalPort，则使用默认的 3389
 	if cfg.LocalPort == 0 {

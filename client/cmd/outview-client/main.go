@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "1.1.0"
+	Version   = "1.2.0"
 	BuildDate = "unknown"
 )
 
@@ -23,6 +23,7 @@ func main() {
 	token := flag.String("token", "", "Authentication token")
 	localPort := flag.Int("local-port", 3389, "Local service port (default: 3389 for RDP)")
 	heartbeatInterval := flag.Int("heartbeat", 30, "Heartbeat interval in seconds")
+	maxRetries := flag.Int("max-retries", -1, "Max reconnect attempts (0=infinite, default: infinite)")
 	configFile := flag.String("config", "", "Config file path (default: auto-detect config.txt)")
 	showVersion := flag.Bool("version", false, "Show version information")
 
@@ -85,6 +86,9 @@ func main() {
 	}
 	if *heartbeatInterval > 0 && *heartbeatInterval != 30 {
 		config.HeartbeatInterval = *heartbeatInterval
+	}
+	if *maxRetries >= 0 {
+		config.MaxRetries = *maxRetries
 	}
 
 	// Load from environment variables (if not set via flags)

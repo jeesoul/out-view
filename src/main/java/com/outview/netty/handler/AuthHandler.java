@@ -151,8 +151,8 @@ public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
             // 停止数据端口
             dataPortService.stopDataPort(externalPort);
 
-            // 释放端口映射
-            portMappingService.releasePort(deviceId);
+            // 标记设备离线（保留固定端口映射，客户端重连时复用）
+            portMappingService.markOffline(deviceId);
 
             // 移除会话
             sessionStore.removeSession(deviceId);

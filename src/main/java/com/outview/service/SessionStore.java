@@ -39,6 +39,12 @@ public class SessionStore {
      * 注册会话
      */
     public void register(String deviceId, String token, Channel channel, int localPort, int externalPort) {
+        // 覆盖前清理同 deviceId 的旧 channel 映射，防止重连时旧映射残留导致误判
+        ClientSession old = sessionMap.get(deviceId);
+        if (old != null && old.getChannel() != null) {
+            channelToDeviceMap.remove(old.getChannel().id().asLongText());
+        }
+
         ClientSession session = ClientSession.builder()
                 .deviceId(deviceId)
                 .token(token)
@@ -68,8 +74,14 @@ public class SessionStore {
      */
     public ClientSession getSessionByChannel(Channel channel) {
         String deviceId = channelToDeviceMap.get(channel.id().asLongText());
-        if (deviceId != null) {
-            return sessionMap.get(deviceId);
+        if (deviceId == null) {
+            return null;
+        }
+        ClientSession session = sessionMap.get(deviceId);
+        // 严格匹配：仅当 session 的 channel 就是传入的 channel 时才返回。
+        // 避免客户端断网快速重连时，旧连接心跳超时触发 channelInactive 误清新连接的 session。
+        if (session != null && session.getChannel() == channel) {
+            return session;
         }
         return null;
     }
