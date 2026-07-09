@@ -39,7 +39,7 @@ func DefaultConfig() *Config {
 		LocalPort:         3389, // RDP default port
 		HeartbeatInterval: 30,
 		AutoReconnect:     true,
-		MaxRetries:        10,
+		MaxRetries:        0, // 0 = 无限重连（被控端需常驻在线）
 		RetryDelay:        5,
 	}
 }
@@ -147,6 +147,11 @@ func LoadFromFile(filename string) (*Config, error) {
 			fmt.Sscanf(value, "%d", &cfg.LocalPort)
 		case "heartbeat":
 			fmt.Sscanf(value, "%d", &cfg.HeartbeatInterval)
+		case "max-retries", "maxretries", "max_retries":
+			fmt.Sscanf(value, "%d", &cfg.MaxRetries)
+		case "auto-reconnect", "autoreconnect", "auto_reconnect":
+			b := strings.ToLower(value)
+			cfg.AutoReconnect = b == "true" || b == "1" || b == "yes"
 		}
 	}
 

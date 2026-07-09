@@ -169,12 +169,72 @@ public class DeviceController {
             m.put("externalPort", mapping.getExternalPort());
             m.put("deviceId", mapping.getDeviceId());
             m.put("targetPort", mapping.getTargetPort());
+            m.put("online", mapping.isOnline());
             m.put("createTime", mapping.getCreateTime());
+            m.put("lastOnlineTime", mapping.getLastOnlineTime());
             mappings.add(m);
         }
+        // 在线优先，再按端口升序
+        mappings.sort((a, b) -> {
+            boolean aOnline = Boolean.TRUE.equals(a.get("online"));
+            boolean bOnline = Boolean.TRUE.equals(b.get("online"));
+            if (aOnline != bOnline) return aOnline ? -1 : 1;
+            return Integer.compare((Integer) a.get("externalPort"), (Integer) b.get("externalPort"));
+        });
         Map<String, Object> result = new HashMap<>();
         result.put("total", mappings.size());
         result.put("mappings", mappings);
+        return result;
+    }
+
+    /** 预设固定端口映射（设备未上线也可预设，客户端上线时自动复用） */
+    @PostMapping("/mappings")
+    public Map<String, Object> presetMapping(@RequestBody Map<String, Object> body) {
+        String deviceId = body.get("deviceId") instanceof String ? (String) body.get("deviceId") : null;
+        Integer externalPort = body.get("externalPort") instanceof Number
+                ? ((Number) body.get("externalPort")).intValue() : null;
+        Integer targetPort = body.get("targetPort") instanceof Number
+                ? ((Number) body.get("targetPort")).intValue() : null;
+
+        Map<String, Object> result = new HashMap<>();
+        if (deviceId == null || deviceId.trim().isEmpty() || externalPort == null) {
+            result.put("success", false);
+            result.put("error", "deviceId 和 externalPort 不能为空");
+            return result;
+        }
+        if (targetPort == null) {
+            targetPort = 3389; // 默认 RDP
+        }
+
+        String failReason = portMappingService.setFixedPort(deviceId.trim(), externalPort, targetPort);
+        if (failReason != null) {
+            result.put("success", false);
+            result.put("error", failReason);
+        } else {
+            result.put("success", true);
+            result.put("deviceId", deviceId.trim());
+            result.put("externalPort", externalPort);
+            result.put("targetPort", targetPort);
+        }
+        return result;
+    }
+
+    /** 删除固定端口映射（释放端口；若设备在线则一并断开） */
+    @DeleteMapping("/mappings/{deviceId}")
+    public Map<String, Object> deleteMapping(@PathVariable String deviceId) {
+        ClientSession session = sessionStore.getSession(deviceId);
+        if (session != null) {
+            if (session.getChannel() != null && session.getChannel().isActive()) {
+                session.getChannel().close();
+            }
+            dataPortService.stopDataPort(session.getExternalPort());
+            sessionStore.removeSession(deviceId);
+        }
+        portMappingService.releasePort(deviceId);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("deviceId", deviceId);
         return result;
     }
 
@@ -185,7 +245,7 @@ public class DeviceController {
                 session.getChannel().close();
             }
             dataPortService.stopDataPort(session.getExternalPort());
-            portMappingService.releasePort(deviceId);
+            portMappingService.markOffline(deviceId);
             sessionStore.removeSession(deviceId);
         }
     }
