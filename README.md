@@ -1,12 +1,26 @@
-﻿# outView
+<div align="center">
 
-> 自托管远程桌面与 TCP 内网穿透。
+# outView
+
+**自托管远程桌面与 TCP 内网穿透**
+
+一个设备码，连接远方的电脑；一台服务器，掌握自己的访问入口。
+
+[![Release](https://img.shields.io/github/v/release/jeesoul/out-view?style=flat-square&label=release)](https://github.com/jeesoul/out-view/releases/latest)
+[![License](https://img.shields.io/github/license/jeesoul/out-view?style=flat-square)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-8%2B-ed8b00?style=flat-square&logo=openjdk&logoColor=white)](pom.xml)
+[![Go](https://img.shields.io/badge/Go-1.24%2B-00add8?style=flat-square&logo=go&logoColor=white)](client/go.mod)
+[![Website](https://img.shields.io/badge/website-outview.jeesoul.com-2563eb?style=flat-square)](https://outview.jeesoul.com/)
+
+[官网](https://outview.jeesoul.com/) · [快速开始](#快速开始) · [文档](#文档) · [下载发布包](https://github.com/jeesoul/out-view/releases) · [问题反馈](https://github.com/jeesoul/out-view/issues)
+
+</div>
 
 outView 把内网电脑上的 RDP 或其他 TCP 服务映射到你自己的公网服务器。被控端主动建立隧道，控制端通过设备码或固定公网端口访问目标设备，无需为每台内网电脑单独配置路由器端口转发。
 
 项目由 Java 服务端和 Go 客户端组成，提供 Windows 图形客户端、命令行客户端与 Web 管理后台。当前稳定传输路径为 TCP 中继；WebRTC 保留为实验模块，不能按生产传输能力使用。
 
-> **版本状态**：`pom.xml` 当前版本为 `1.2.1`。仓库当前提交尚未创建 `v1.2.1` tag 或 GitHub Release，下面的下载链接统一指向仓库和 Releases 列表，避免把候选构建误写成正式发布。
+> **当前版本**：`v1.2.1`。Windows、Linux 和 macOS 客户端已随 GitHub Release 提供；版本变更见 [CHANGELOG](CHANGELOG.md)，文件校验见 Release 中的 `SHA256SUMS`。
 
 ## 能力概览
 
@@ -43,7 +57,7 @@ RDP 的桌面显示、键鼠交互和登录认证由 Windows 系统处理，outV
 
 ### 1. 准备服务端
 
-开发或自建部署需要 JDK 8、Maven 和 Go 1.24+；使用已构建的 Windows 候选包时不需要安装 Go 或 Maven。将配置示例复制为 `application.yml`，设置管理账号后启动：
+开发或自建部署需要 JDK 8、Maven 和 Go 1.24+；使用已构建的发布包时不需要安装 Go 或 Maven。将配置示例复制为 `application.yml`，设置管理账号后启动：
 
 ```powershell
 java -jar outview-server.jar
@@ -83,9 +97,11 @@ mstsc /v:tunnel.example.com:6001
 
 | 平台 | 客户端形态 | 当前状态 |
 | --- | --- | --- |
-| Windows x64 | GUI + CLI | 候选构建包提供预编译文件 |
-| Linux x64 / ARM64 | CLI | 可由发布脚本交叉构建；无 Fyne GUI |
-| macOS Intel / Apple Silicon | CLI | 可由发布脚本交叉构建；无 Fyne GUI |
+| Windows x64 | GUI + CLI | [下载发布包](https://github.com/jeesoul/out-view/releases/download/v1.2.1/outview-1.2.1-windows-x64.zip) |
+| Linux x64 | CLI | [下载发布包](https://github.com/jeesoul/out-view/releases/download/v1.2.1/outview-1.2.1-linux-amd64.tar.gz) |
+| Linux ARM64 | CLI | [下载发布包](https://github.com/jeesoul/out-view/releases/download/v1.2.1/outview-1.2.1-linux-arm64.tar.gz) |
+| macOS Intel | CLI | [下载发布包](https://github.com/jeesoul/out-view/releases/download/v1.2.1/outview-1.2.1-macos-amd64.tar.gz) |
+| macOS Apple Silicon | CLI | [下载发布包](https://github.com/jeesoul/out-view/releases/download/v1.2.1/outview-1.2.1-macos-arm64.tar.gz) |
 
 Linux 和 macOS 的 CLI 与 Windows CLI 共用同一套连接核心，可转发 RDP 以外的 TCP 服务。当前 Windows GUI 依赖 Fyne 原生窗口和 CGO，未提供 Linux/macOS GUI。
 
@@ -147,9 +163,9 @@ website/                         outview.jeesoul.com 静态官网
 - [更新记录](CHANGELOG.md)
 - [官网源码与部署](website/README.md)
 
-## 候选发布包
+## 发布包
 
-当前本地候选包位于 `release/outview-1.2.1-platforms/`，包含 Windows x64、Linux x64/ARM64 和 macOS Intel/Apple Silicon 的独立压缩包及 `SHA256SUMS`。该目录用于发布前核对；正式上线时请将五个压缩包和校验文件上传到同一个 GitHub Release。
+`v1.2.1` 发布包位于 [GitHub Releases](https://github.com/jeesoul/out-view/releases/tag/v1.2.1)，包含 Windows x64、Linux x64/ARM64 和 macOS Intel/Apple Silicon 的独立压缩包及 `SHA256SUMS`。本地构建目录为 `release/outview-1.2.1-platforms/`。
 
 ## 当前边界
 

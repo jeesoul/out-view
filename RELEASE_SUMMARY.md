@@ -1,6 +1,6 @@
-﻿# 1.2.1 候选构建说明
+﻿# outView 1.2.1 发布验证说明
 
-本文记录当前 `1.2.1` 提交的验证范围。它是本地构建依据，不代表已经创建正式 Git tag、GitHub Release 或公网部署。
+本文记录 `v1.2.1` 发布资产的验证范围。发布资产已上传到 GitHub Release；该验证不等同于公网、真实 RDP 或小时级稳定性保证。
 
 ## 已验证项目
 
@@ -19,12 +19,13 @@
 
 ## 发布前检查
 
-- 在最终提交上创建正式版本 tag，并以 tag 重新构建全部产物。
+- 后续版本发布时，在最终提交上创建正式版本 tag，并以 tag 重新构建全部产物。
 - 生成发布包和 `.sha256` 校验文件，确认包内 README、CHANGELOG 与版本一致。
-- 将 `release/outview-1.2.1-platforms/` 中的 Windows、Linux、macOS 压缩包作为独立 Release assets 上传。
+- 本次已将 `release/outview-1.2.1-platforms/` 中的 Windows、Linux、macOS 压缩包作为独立 Release assets 上传。
 - 在 GitHub Release 中使用简短标题 `outView 1.2.1`，将变更说明放入正文，不把描述拼接到标题。
 - 发布前补充真实 Windows RDP 和公网环境验证；当前回环结果不外推为公网、真实 RDP 或小时级稳定性保证。
 
 ## 当前边界
 
 WebRTC 仍是实验模块。网络真实断开会结束原 TCP 流，连接恢复后需要重新建立远程桌面。GUI 原生编译成功不等于已完成真实桌面窗口、系统托盘和 RDP 登录验收。
+
