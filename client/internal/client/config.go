@@ -4,9 +4,12 @@ package client
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds the client configuration
@@ -29,18 +32,41 @@ type Config struct {
 	AutoReconnect bool
 	MaxRetries    int
 	RetryDelay    int // seconds
+
+	// 控制连接拨号、读空闲、单次写入及心跳应答超时；零值使用默认值。
+	DialTimeout      time.Duration
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+	HeartbeatTimeout time.Duration
+	RegisterTimeout  time.Duration // 注册必须在此期限内完成，其他消息不会延长期限。
+	// 本地服务拨号和写入超时；每条连接独立排队，超过字节/消息上限只关闭该连接。
+	LocalDialTimeout    time.Duration
+	LocalWriteTimeout   time.Duration
+	LocalQueueBytes     int
+	LocalQueueSize      int
+	MaxLocalConnections int // 同时转发连接数量上限，防止无界创建 goroutine。
 }
 
 // DefaultConfig returns a config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		ServerHost:        "localhost",
-		ServerPort:        7000,
-		LocalPort:         3389, // RDP default port
-		HeartbeatInterval: 30,
-		AutoReconnect:     true,
-		MaxRetries:        0, // 0 = 无限重连（被控端需常驻在线）
-		RetryDelay:        5,
+		ServerHost:          "localhost",
+		ServerPort:          7000,
+		LocalPort:           3389, // RDP default port
+		HeartbeatInterval:   30,
+		AutoReconnect:       true,
+		MaxRetries:          0, // 0 = 无限重连（被控端需常驻在线）
+		RetryDelay:          5,
+		DialTimeout:         10 * time.Second,
+		ReadTimeout:         90 * time.Second,
+		WriteTimeout:        10 * time.Second,
+		HeartbeatTimeout:    90 * time.Second,
+		RegisterTimeout:     15 * time.Second,
+		LocalDialTimeout:    5 * time.Second,
+		LocalWriteTimeout:   10 * time.Second,
+		LocalQueueBytes:     1024 * 1024,
+		LocalQueueSize:      64,
+		MaxLocalConnections: 128,
 	}
 }
 
@@ -64,12 +90,42 @@ func (c *Config) Validate() error {
 	if c.HeartbeatInterval <= 0 {
 		return fmt.Errorf("invalid heartbeat interval: %d", c.HeartbeatInterval)
 	}
+	return c.validateConnectionSettings()
+}
+
+// 零值允许旧配置沿用默认值，负值和会造成溢出/过量分配的值明确报错。
+func (c *Config) validateConnectionSettings() error {
+	for name, d := range map[string]time.Duration{"dial-timeout": c.DialTimeout, "read-timeout": c.ReadTimeout,
+		"write-timeout": c.WriteTimeout, "heartbeat-timeout": c.HeartbeatTimeout, "register-timeout": c.RegisterTimeout,
+		"local-dial-timeout": c.LocalDialTimeout, "local-write-timeout": c.LocalWriteTimeout} {
+		if d < 0 || d > 24*time.Hour {
+			return fmt.Errorf("invalid %s: must be between 0 and 24h", name)
+		}
+	}
+	if c.LocalQueueBytes < 0 || c.LocalQueueBytes > 64*1024*1024 {
+		return fmt.Errorf("invalid local-queue-bytes: maximum 64 MiB")
+	}
+	if c.LocalQueueSize < 0 || c.LocalQueueSize > 4096 {
+		return fmt.Errorf("invalid local-queue-size: maximum 4096")
+	}
+	if c.MaxLocalConnections < 0 || c.MaxLocalConnections > 4096 {
+		return fmt.Errorf("invalid max-local-connections: maximum 4096")
+	}
+	if c.MaxRetries < 0 {
+		return fmt.Errorf("invalid max-retries: must be non-negative")
+	}
+	if c.RetryDelay < 0 || c.RetryDelay > 3600 {
+		return fmt.Errorf("invalid retry-delay: maximum 3600 seconds")
+	}
+	if c.HeartbeatInterval > 86400 {
+		return fmt.Errorf("invalid heartbeat: maximum 86400 seconds")
+	}
 	return nil
 }
 
 // ServerAddr returns the server address in host:port format
 func (c *Config) ServerAddr() string {
-	return fmt.Sprintf("%s:%d", c.ServerHost, c.ServerPort)
+	return net.JoinHostPort(c.ServerHost, strconv.Itoa(c.ServerPort))
 }
 
 // LocalAddr returns the local service address in host:port format
@@ -110,13 +166,50 @@ func (c *Config) String() string {
 // File format: key=value (one per line)
 // Supports: host, port, device-id, token, local-port, heartbeat
 func LoadFromFile(filename string) (*Config, error) {
+	return LoadFromFileWithDefaults(filename, DefaultConfig())
+}
+
+// 零值保持旧版 Config 字面量兼容；复制配置后补齐，不修改调用方对象。
+func (c *Config) applyTimeoutDefaults() {
+	d := DefaultConfig()
+	pairs := [][2]*time.Duration{{&c.DialTimeout, &d.DialTimeout}, {&c.ReadTimeout, &d.ReadTimeout},
+		{&c.WriteTimeout, &d.WriteTimeout}, {&c.HeartbeatTimeout, &d.HeartbeatTimeout}, {&c.RegisterTimeout, &d.RegisterTimeout},
+		{&c.LocalDialTimeout, &d.LocalDialTimeout}, {&c.LocalWriteTimeout, &d.LocalWriteTimeout}}
+	for _, pair := range pairs {
+		if *pair[0] == 0 {
+			*pair[0] = *pair[1]
+		}
+	}
+	if c.HeartbeatInterval == 0 {
+		c.HeartbeatInterval = d.HeartbeatInterval
+	}
+	if c.RetryDelay == 0 {
+		c.RetryDelay = d.RetryDelay
+	}
+	if c.LocalQueueBytes == 0 {
+		c.LocalQueueBytes = d.LocalQueueBytes
+	}
+	if c.LocalQueueSize == 0 {
+		c.LocalQueueSize = d.LocalQueueSize
+	}
+	if c.MaxLocalConnections == 0 {
+		c.MaxLocalConnections = d.MaxLocalConnections
+	}
+}
+
+// LoadFromFileWithDefaults 复制默认配置后应用文件配置，不修改调用方的默认值。
+func LoadFromFileWithDefaults(filename string, defaults *Config) (*Config, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	cfg := DefaultConfig()
+	if defaults == nil {
+		defaults = DefaultConfig()
+	}
+	copyConfig := *defaults
+	cfg := &copyConfig
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -133,6 +226,34 @@ func LoadFromFile(filename string) (*Config, error) {
 
 		key := strings.TrimSpace(strings.ToLower(parts[0]))
 		value := strings.TrimSpace(parts[1])
+		// 时间支持 500ms、10s、2m；纯数字沿用秒单位。
+		durations := map[string]*time.Duration{
+			"dial-timeout": &cfg.DialTimeout, "read-timeout": &cfg.ReadTimeout,
+			"write-timeout": &cfg.WriteTimeout, "heartbeat-timeout": &cfg.HeartbeatTimeout,
+			"register-timeout":   &cfg.RegisterTimeout,
+			"local-dial-timeout": &cfg.LocalDialTimeout, "local-write-timeout": &cfg.LocalWriteTimeout,
+		}
+		if target, ok := durations[key]; ok {
+			if _, err := strconv.Atoi(value); err == nil {
+				value += "s"
+			}
+			duration, err := time.ParseDuration(value)
+			if err != nil || duration <= 0 {
+				return nil, fmt.Errorf("invalid %s: %s", key, value)
+			}
+			*target = duration
+			continue
+		}
+		limits := map[string]*int{"retry-delay": &cfg.RetryDelay, "local-queue-bytes": &cfg.LocalQueueBytes,
+			"local-queue-size": &cfg.LocalQueueSize, "max-local-connections": &cfg.MaxLocalConnections}
+		if target, ok := limits[key]; ok {
+			n, err := strconv.Atoi(value)
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("invalid %s: %s", key, value)
+			}
+			*target = n
+			continue
+		}
 
 		switch key {
 		case "host":

@@ -1,44 +1,53 @@
-#!/bin/bash
-# Deploy outView server to 120.27.214.55
+#!/usr/bin/env bash
+set -euo pipefail
 
-SERVER="120.27.214.55"
-USER="root"  # 修改为实际用户名
-DEPLOY_DIR="/opt/outview"
+project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=scripts/common.sh
+source "$project_root/scripts/common.sh"
+version=$(outview_version "$project_root")
 
-echo "Deploying outView v1.2.0 to ${SERVER}..."
+if (($# < 1 || $# > 3)); then
+  echo "Usage: $0 SSH_TARGET [DEPLOY_DIR] [PACKAGE_DIR]" >&2
+  echo "Example: $0 deploy@example.com /opt/outview release/outview-$version" >&2
+  exit 2
+fi
+ssh_target=$1
+deploy_dir=${2:-/opt/outview}
+package_dir=${3:-$project_root/release/outview-$version}
+[[ "$package_dir" == /* ]] || package_dir="$project_root/$package_dir"
+case "$deploy_dir" in /*) ;; *) echo 'DEPLOY_DIR must be an absolute Unix path.' >&2; exit 2 ;; esac
+case "$deploy_dir" in *[!A-Za-z0-9_./-]*) echo 'DEPLOY_DIR contains unsupported characters.' >&2; exit 2 ;; esac
 
-# 1. 上传服务端文件
-echo "Uploading server files..."
-scp release/outview-1.2.0/outview-server.jar ${USER}@${SERVER}:${DEPLOY_DIR}/
-scp release/outview-1.2.0/application.yml ${USER}@${SERVER}:${DEPLOY_DIR}/
-scp release/outview-1.2.0/start.sh ${USER}@${SERVER}:${DEPLOY_DIR}/
+jar="$package_dir/outview-server.jar"
+config_example="$package_dir/application.yml.example"
+test -f "$jar" || { echo "Missing release JAR: $jar" >&2; exit 1; }
+test -f "$config_example" || { echo "Missing configuration example: $config_example" >&2; exit 1; }
 
-# 2. 创建 systemd 服务
-echo "Creating systemd service..."
-ssh ${USER}@${SERVER} << 'EOF'
-cat > /etc/systemd/system/outview.service << 'SERVICE'
+temporary_unit=$(mktemp "${TMPDIR:-/tmp}/outview.service.XXXXXX")
+trap 'rm -f -- "$temporary_unit"' EXIT
+cat > "$temporary_unit" <<UNIT
 [Unit]
 Description=outView Remote Desktop Server
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/opt/outview
-ExecStart=/usr/bin/java -jar /opt/outview/outview-server.jar
+WorkingDirectory=$deploy_dir
+Environment=OUTVIEW_DATA_DIR=$deploy_dir/data
+ExecStart=/usr/bin/java -jar $deploy_dir/current/outview-server.jar --spring.config.additional-location=optional:file:$deploy_dir/shared/application.yml
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
+UNIT
 
-systemctl daemon-reload
-systemctl enable outview
-systemctl restart outview
-systemctl status outview
-EOF
+remote_release="$deploy_dir/releases/$version"
+ssh "$ssh_target" "set -eu; mkdir -p '$remote_release' '$deploy_dir/shared' '$deploy_dir/data'"
+scp "$jar" "$ssh_target:$remote_release/outview-server.jar"
+scp "$config_example" "$ssh_target:$remote_release/application.yml.example"
+scp "$temporary_unit" "$ssh_target:/tmp/outview.service.$version"
+ssh "$ssh_target" "set -eu; if [ ! -e '$deploy_dir/shared/application.yml' ]; then if [ -f '$deploy_dir/application.yml' ]; then cp '$deploy_dir/application.yml' '$deploy_dir/shared/application.yml'; else cp '$remote_release/application.yml.example' '$deploy_dir/shared/application.yml'; fi; fi; ln -sfn '$remote_release' '$deploy_dir/current'; sudo install -m 0644 '/tmp/outview.service.$version' /etc/systemd/system/outview.service; rm -f '/tmp/outview.service.$version'; sudo systemctl daemon-reload; sudo systemctl enable outview; sudo systemctl restart outview; sudo systemctl status --no-pager outview"
 
-echo "Deployment complete!"
-echo "Check status: ssh ${USER}@${SERVER} 'systemctl status outview'"
-echo "View logs: ssh ${USER}@${SERVER} 'journalctl -u outview -f'"
+echo "Deployed outView $version to $ssh_target:$remote_release"
+echo "Existing $deploy_dir/shared/application.yml was preserved."

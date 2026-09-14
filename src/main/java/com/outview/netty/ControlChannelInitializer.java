@@ -30,6 +30,7 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
     private final ProxyHandler proxyHandler;
     private final RendezvousHandler rendezvousHandler;
     private final OutViewProperties properties;
+    private final io.netty.util.concurrent.DefaultEventExecutorGroup businessExecutor;
 
     private SslContext sslContext;
 
@@ -37,12 +38,14 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
                                      HeartbeatHandler heartbeatHandler,
                                      ProxyHandler proxyHandler,
                                      RendezvousHandler rendezvousHandler,
-                                     OutViewProperties properties) {
+                                     OutViewProperties properties,
+                                     io.netty.util.concurrent.DefaultEventExecutorGroup businessExecutor) {
         this.authHandler = authHandler;
         this.heartbeatHandler = heartbeatHandler;
         this.proxyHandler = proxyHandler;
         this.rendezvousHandler = rendezvousHandler;
         this.properties = properties;
+        this.businessExecutor = businessExecutor;
     }
 
     @PostConstruct
@@ -76,10 +79,11 @@ public class ControlChannelInitializer extends ChannelInitializer<SocketChannel>
         pipeline.addLast("decoder", new com.outview.protocol.codec.MessageDecoder());
         pipeline.addLast("encoder", new com.outview.protocol.codec.MessageEncoder());
 
-        // 业务处理器
-        pipeline.addLast("auth", authHandler);
+        // 已注册连接的数据、查询和关闭在IO线程处理，不能排在慢数据库注册任务之后。
         pipeline.addLast("heartbeat", heartbeatHandler);
         pipeline.addLast("rendezvous", rendezvousHandler);
         pipeline.addLast("proxy", proxyHandler);
+        // ProxyHandler 将REGISTER继续向后传递，只有注册及其生命周期事件进入业务线程。
+        pipeline.addLast(businessExecutor, "auth", authHandler);
     }
 }

@@ -38,7 +38,7 @@ public class SessionStore {
     /**
      * 注册会话
      */
-    public void register(String deviceId, String token, Channel channel, int localPort, int externalPort) {
+    public synchronized void register(String deviceId, String token, Channel channel, int localPort, int externalPort) {
         // 覆盖前清理同 deviceId 的旧 channel 映射，防止重连时旧映射残留导致误判
         ClientSession old = sessionMap.get(deviceId);
         if (old != null && old.getChannel() != null) {
@@ -59,6 +59,11 @@ public class SessionStore {
         sessionMap.put(deviceId, session);
         channelToDeviceMap.put(channel.id().asLongText(), deviceId);
 
+        if (old != null && old.getChannel() != channel) {
+            old.setStatus(ClientSession.SessionStatus.OFFLINE);
+            log.info("Control connection replaced: deviceId={}", deviceId);
+            old.getChannel().close();
+        }
         log.info("Session registered: deviceId={}, externalPort={}", deviceId, externalPort);
     }
 
@@ -72,7 +77,7 @@ public class SessionStore {
     /**
      * 根据 Channel 获取会话
      */
-    public ClientSession getSessionByChannel(Channel channel) {
+    public synchronized ClientSession getSessionByChannel(Channel channel) {
         String deviceId = channelToDeviceMap.get(channel.id().asLongText());
         if (deviceId == null) {
             return null;
@@ -101,7 +106,7 @@ public class SessionStore {
     /**
      * 移除会话
      */
-    public void removeSession(String deviceId) {
+    public synchronized void removeSession(String deviceId) {
         ClientSession session = sessionMap.remove(deviceId);
         if (session != null && session.getChannel() != null) {
             channelToDeviceMap.remove(session.getChannel().id().asLongText());
@@ -112,11 +117,15 @@ public class SessionStore {
     /**
      * 根据 Channel 移除会话
      */
-    public void removeSessionByChannel(Channel channel) {
+    public synchronized void removeSessionByChannel(Channel channel) {
         String deviceId = channelToDeviceMap.remove(channel.id().asLongText());
         if (deviceId != null) {
-            sessionMap.remove(deviceId);
-            log.info("Session removed by channel: deviceId={}", deviceId);
+            ClientSession session = sessionMap.get(deviceId);
+            if (session != null && session.getChannel() == channel) {
+                sessionMap.remove(deviceId, session);
+                session.setStatus(ClientSession.SessionStatus.OFFLINE);
+                log.info("Session removed by channel: deviceId={}", deviceId);
+            }
         }
     }
 

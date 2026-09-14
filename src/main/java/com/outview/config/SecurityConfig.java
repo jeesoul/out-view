@@ -30,7 +30,7 @@ public class SecurityConfig {
             .csrf().disable()
             .authorizeRequests()
                 // 健康检查和 Netty 相关接口不需要鉴权
-                .antMatchers("/health").permitAll()
+                .antMatchers("/health", "/assets/**").permitAll()
                 // 管理页面和 API 需要登录
                 .antMatchers("/", "/index.html", "/api/**").authenticated()
                 .anyRequest().authenticated()

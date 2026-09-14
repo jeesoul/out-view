@@ -17,10 +17,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AcceptanceTest {
 
-    private static final String PROJECT_ROOT = "D:\\claudeCodeSpace\\java\\out-view";
-    private static final String SOURCE_DIR = PROJECT_ROOT + "\\src\\main\\java\\com\\outview";
-    private static final String TEST_DIR = PROJECT_ROOT + "\\src\\test\\java\\com\\outview";
-    private static final String RESOURCES_DIR = PROJECT_ROOT + "\\src\\main\\resources";
+    private static final String PROJECT_ROOT = Paths.get("").toAbsolutePath().normalize().toString();
+    private static final String SOURCE_DIR = Paths.get(PROJECT_ROOT, "src", "main", "java", "com", "outview").toString();
+    private static final String TEST_DIR = Paths.get(PROJECT_ROOT, "src", "test", "java", "com", "outview").toString();
+    private static final String RESOURCES_DIR = Paths.get(PROJECT_ROOT, "src", "main", "resources").toString();
 
     /**
      * 测试1: 项目结构完整性

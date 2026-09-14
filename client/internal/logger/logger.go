@@ -3,6 +3,7 @@ package logger
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync/atomic"
 )
@@ -63,11 +64,10 @@ func ParseLevel(s string) Level {
 	}
 }
 
-// currentLevel is the runtime log filter, default LevelDebug for
-// backwards compatibility (the previous logger always emitted everything).
+// 默认 INFO，避免持续转发时逐包日志阻塞控制读循环；排查时可设置 OUTVIEW_LOG_LEVEL=DEBUG。
 var currentLevel atomic.Int32
 
-func init() { currentLevel.Store(int32(LevelDebug)) }
+func init() { currentLevel.Store(int32(ParseLevel(os.Getenv("OUTVIEW_LOG_LEVEL")))) }
 
 // SetLevel updates the runtime log level. Subsequent log calls below
 // this level are dropped before formatting.

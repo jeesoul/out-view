@@ -2,169 +2,49 @@ package com.outview.netty.handler;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.outview.entity.ClientSession;
 import com.outview.protocol.ProtocolConstants;
 import com.outview.protocol.ProtocolMessage;
-import com.outview.service.BanService;
-import com.outview.service.DataPortService;
-import com.outview.service.PortMappingService;
-import com.outview.service.SessionStore;
+import com.outview.service.DeviceLifecycleService;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import java.nio.charset.StandardCharsets;
 
-import java.util.HashMap;
-import java.util.Map;
-
-/**
- * 鉴权处理器
- * 处理客户端注册请求
- */
+/** 注册和断线委托生命周期服务，在独立业务线程中执行数据库和端口绑定操作。 */
 @Slf4j
 @Component
 @ChannelHandler.Sharable
 public class AuthHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
-
-    private final SessionStore sessionStore;
-    private final PortMappingService portMappingService;
-    private final DataPortService dataPortService;
-    private final BanService banService;
-
-    public AuthHandler(SessionStore sessionStore,
-                      PortMappingService portMappingService,
-                      DataPortService dataPortService,
-                      BanService banService) {
-        this.sessionStore = sessionStore;
-        this.portMappingService = portMappingService;
-        this.dataPortService = dataPortService;
-        this.banService = banService;
-    }
+    private final DeviceLifecycleService lifecycle;
+    public AuthHandler(DeviceLifecycleService lifecycle) { this.lifecycle = lifecycle; }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, ProtocolMessage msg) throws Exception {
-        // 只处理注册消息
+    protected void channelRead0(ChannelHandlerContext ctx, ProtocolMessage msg) {
         if (msg.getHeader().getType() != ProtocolConstants.TYPE_REGISTER) {
-            // 传递给下一个处理器
             ctx.fireChannelRead(msg);
             return;
         }
-
-        // 解析注册信息
-        String body = new String(msg.getBody());
-        // 敏感信息脱敏：不在日志中记录完整的 token
-        log.info("Register request received from channel: {}", ctx.channel().id().asShortText());
-
         try {
-            JSONObject json = JSON.parseObject(body);
-            String deviceId = json.getString("deviceId");
-            String token = json.getString("token");
+            JSONObject json = JSON.parseObject(new String(msg.getBody(), StandardCharsets.UTF_8));
             Integer localPort = json.getInteger("localPort");
-
-            // 校验参数
-            if (deviceId == null || token == null || localPort == null) {
-                log.warn("Invalid register parameters from channel: {}", ctx.channel().id().asShortText());
-                sendErrorResponse(ctx, "Invalid register parameters");
-                return;
-            }
-
-            // 封禁检查：被封禁的设备直接拒绝并关闭连接
-            if (banService.isBanned(deviceId)) {
-                log.warn("Banned device attempted to connect: deviceId={}", deviceId);
-                sendErrorResponse(ctx, "Device is banned. Contact administrator.");
-                ctx.close();
-                return;
-            }
-
-            // 分配对外端口
-            int externalPort = portMappingService.allocatePort(deviceId, localPort);
-            if (externalPort < 0) {
-                sendErrorResponse(ctx, "No available port");
-                return;
-            }
-
-            // 启动数据端口监听
-            boolean portStarted = dataPortService.startDataPort(externalPort, deviceId);
-            if (!portStarted) {
-                portMappingService.releasePort(deviceId);
-                sendErrorResponse(ctx, "Failed to start data port");
-                return;
-            }
-
-            // 注册会话
-            sessionStore.register(deviceId, token, ctx.channel(), localPort, externalPort);
-
-            // 发送注册成功响应
-            sendRegisterAck(ctx, deviceId, externalPort);
-
-            // 敏感信息脱敏：日志中不记录 token
-            log.info("Client registered: deviceId={}, externalPort={}, localPort={}",
-                    deviceId, externalPort, localPort);
-
+            if (localPort == null) throw new IllegalArgumentException("Invalid localPort");
+            lifecycle.register(json.getString("deviceId"), json.getString("token"), ctx.channel(), localPort);
         } catch (Exception e) {
-            log.error("Register failed: {}", e.getMessage());
-            sendErrorResponse(ctx, "Register failed: " + e.getMessage());
+            log.warn("Register rejected: channel={}, reason={}", ctx.channel().id().asShortText(), e.getMessage());
+            ctx.writeAndFlush(ProtocolMessage.error(e.getMessage() == null ? "Register failed" : e.getMessage()))
+                    .addListener(io.netty.channel.ChannelFutureListener.CLOSE);
         }
     }
 
-    /**
-     * 发送注册响应
-     */
-    private void sendRegisterAck(ChannelHandlerContext ctx, String deviceId, int externalPort) {
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("deviceId", deviceId);
-        response.put("externalPort", externalPort);
-
-        byte[] body = JSON.toJSONString(response).getBytes();
-        ProtocolMessage ack = ProtocolMessage.builder()
-                .header(com.outview.protocol.MessageHeader.builder()
-                        .magic(ProtocolConstants.MAGIC_NUMBER)
-                        .version(ProtocolConstants.VERSION)
-                        .type(ProtocolConstants.TYPE_REGISTER_ACK)
-                        .length(body.length)
-                        .reserved((short) 0)
-                        .build())
-                .body(body)
-                .build();
-
-        ctx.writeAndFlush(ack);
-    }
-
-    /**
-     * 发送错误响应
-     */
-    private void sendErrorResponse(ChannelHandlerContext ctx, String message) {
-        ProtocolMessage error = ProtocolMessage.error(message);
-        ctx.writeAndFlush(error);
-    }
-
-    @Override
-    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        // 连接断开，清理会话和端口映射
-        ClientSession session = sessionStore.getSessionByChannel(ctx.channel());
-        if (session != null) {
-            int externalPort = session.getExternalPort();
-            String deviceId = session.getDeviceId();
-
-            // 停止数据端口
-            dataPortService.stopDataPort(externalPort);
-
-            // 标记设备离线（保留固定端口映射，客户端重连时复用）
-            portMappingService.markOffline(deviceId);
-
-            // 移除会话
-            sessionStore.removeSession(deviceId);
-
-            log.info("Client disconnected: deviceId={}, externalPort={}", deviceId, externalPort);
-        }
+    @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        lifecycle.disconnected(ctx.channel());
         super.channelInactive(ctx);
     }
 
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        log.error("AuthHandler exception: channel={}", ctx.channel().id().asShortText(), cause);
+    @Override public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        log.warn("Control connection failed: channel={}, reason={}", ctx.channel().id().asShortText(), cause.toString());
         ctx.close();
     }
 }

@@ -1,9 +1,15 @@
-; outView 1.2.0 Windows 安装包脚本
-; 使用 Inno Setup 6.x 编译
-; 下载地址: https://jrsoftware.org/isdl.php
+; outView Windows installer. build-installer.bat passes all build-dependent paths.
+#ifndef AppVersion
+  #define AppVersion "1.2.1"
+#endif
+#ifndef SourceRoot
+  #define SourceRoot "..\..\release\outview-" + AppVersion
+#endif
+#ifndef OutputDir
+  #define OutputDir "..\..\release\installer"
+#endif
 
 #define AppName "outView"
-#define AppVersion "1.2.0"
 #define AppPublisher "outView Team"
 #define AppURL "https://github.com/outview/outview"
 #define AppExeName "outview.exe"
@@ -15,22 +21,15 @@ AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
-AppUpdatesURL={#AppURL}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
-; 安装包输出路径
-OutputDir=D:\claudeCodeSpace\java\out-view\release\installer
+OutputDir={#OutputDir}
 OutputBaseFilename=outview-{#AppVersion}-setup
-; 压缩
 Compression=lzma2/ultra64
 SolidCompression=yes
-; 需要管理员权限（用于注册开机自启服务）
 PrivilegesRequired=admin
-; 安装包图标（可选）
-; SetupIconFile=assets\icon.ico
 WizardStyle=modern
-; 最低 Windows 版本: Windows 7
 MinVersion=6.1
 
 [Languages]
@@ -38,48 +37,40 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"; Flags: unchecked
-Name: "autostart"; Description: "开机自动启动被控服务（推荐被控端勾选）"; GroupDescription: "附加任务:"
+Name: "autostart"; Description: "用户登录后自动启动被控服务"; GroupDescription: "附加任务:"
 
 [Files]
-; GUI 主程序
-Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\client\windows\outview-client.exe"; DestDir: "{app}"; DestName: "outview.exe"; Flags: ignoreversion
-; WebRTC Sidecar
-Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\webrtc-sidecar\windows\webrtc-sidecar.exe"; DestDir: "{app}"; Flags: ignoreversion
-; 用户手册
-Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\USER_MANUAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "D:\claudeCodeSpace\java\out-view\release\outview-1.2.0\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+; GUI 与 CLI 的文件名严格区分。安装包只接受真实 GUI 产物。
+Source: "{#SourceRoot}\client\windows\outview-client-gui-windows-amd64.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+; Sidecar 随包保留用于实验，不代表 WebRTC 传输已接通。
+Source: "{#SourceRoot}\webrtc-sidecar\windows\outview-sidecar-windows-amd64.exe"; DestDir: "{app}"; DestName: "outview-sidecar.exe"; Flags: ignoreversion
+Source: "{#SourceRoot}\USER_MANUAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#SourceRoot}\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#SourceRoot}\docs\*.md"; DestDir: "{app}\docs\docs"; Flags: ignoreversion
 
 [Icons]
-; 开始菜单
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\卸载 {#AppName}"; Filename: "{uninstallexe}"
-; 桌面快捷方式（可选）
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Registry]
-; 开机自启（仅当用户勾选时）
+; 保持旧版本的安装和注册表范围；Run 项在用户登录后启动 GUI，不是 Windows 服务。
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "outView"; \
-  ValueData: """{app}\{#AppExeName}"""; \
+  ValueData: """{app}\{#AppExeName}"" -auto-start"; \
   Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-; 安装完成后启动
-Filename: "{app}\{#AppExeName}"; Description: "立即启动 outView"; \
-  Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "立即启动 outView"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; 卸载前停止进程
 Filename: "taskkill"; Parameters: "/f /im outview.exe"; Flags: runhidden; RunOnceId: "KillOutview"
 
 [Code]
-// 安装前检查是否已有旧版本在运行
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
 begin
-  if CurStep = ssInstall then begin
-    // 停止旧版本进程
+  if CurStep = ssInstall then
     Exec('taskkill', '/f /im outview.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end;
 end;

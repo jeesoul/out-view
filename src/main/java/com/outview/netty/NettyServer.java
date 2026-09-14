@@ -53,12 +53,14 @@ public class NettyServer implements CommandLineRunner {
                     .childHandler(controlChannelInitializer);
 
             int port = properties.getControlPort();
-            bootstrap.bind(new InetSocketAddress(port)).sync();
+            bootstrap.bind(new InetSocketAddress(properties.getBindAddress(), port)).sync();
             log.info("OutView Control Server started on port: {}", port);
 
         } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             log.error("Failed to start Netty server", e);
             shutdown();
+            throw new IllegalStateException("Failed to bind control port " + properties.getControlPort(), e);
         }
     }
 

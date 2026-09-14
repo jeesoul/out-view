@@ -20,7 +20,8 @@ type WebRTCSettings struct {
 
 func defaultWebRTCSettings() *WebRTCSettings {
 	return &WebRTCSettings{
-		Enabled: true,
+		// 数据链路尚在实验阶段，新安装默认使用稳定 TCP。
+		Enabled: false,
 		STUNServers: "stun:stun.l.google.com:19302\n" +
 			"stun:stun1.l.google.com:19302\n" +
 			"stun:stun.qq.com:3478",

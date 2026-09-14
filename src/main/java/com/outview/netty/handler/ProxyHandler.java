@@ -41,7 +41,7 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
                 handleDataMessage(ctx, msg);
                 break;
             case ProtocolConstants.TYPE_CLOSE_CONNECTION:
-                handleCloseConnectionMessage(msg);
+                handleCloseConnectionMessage(ctx, msg);
                 break;
             case ProtocolConstants.TYPE_REGISTER:
             case ProtocolConstants.TYPE_HEARTBEAT:
@@ -63,7 +63,7 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
         String connectionId = dataPacket.getConnectionId();
         byte[] data = dataPacket.getData();
 
-        if (connectionId != null && !connectionId.isEmpty()) {
+        if (connectionId != null && !connectionId.isEmpty() && rawDataHandler.ownsConnection(connectionId, ctx.channel())) {
             boolean sent = rawDataHandler.sendToUser(connectionId, data);
             log.debug("[ProxyHandler] Forwarded to user: connectionId={}, length={}, sent={}", connectionId, data.length, sent);
         } else {
@@ -75,14 +75,21 @@ public class ProxyHandler extends SimpleChannelInboundHandler<ProtocolMessage> {
         }
     }
 
-    private void handleCloseConnectionMessage(ProtocolMessage msg) {
+    private void handleCloseConnectionMessage(ChannelHandlerContext ctx, ProtocolMessage msg) {
         String connectionId = msg.parseCloseConnectionId();
         if (connectionId == null || connectionId.isEmpty()) {
             log.warn("Close connection message missing connectionId");
             return;
         }
+        if (!rawDataHandler.ownsConnection(connectionId, ctx.channel())) return;
         boolean closed = rawDataHandler.closeUserConnectionByConnectionId(connectionId);
         log.info("[ProxyHandler] Close connection: connectionId={}, closed={}", connectionId, closed);
+    }
+
+    @Override
+    public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+        rawDataHandler.resumeExternalReads(ctx.channel());
+        super.channelWritabilityChanged(ctx);
     }
 
     @Override

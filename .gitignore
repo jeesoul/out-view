@@ -43,6 +43,7 @@ buildNumber.properties
 Thumbs.db
 
 # Go client build output
+artifacts/
 client/build/
 client/outview-client.exe
 client/outview-client

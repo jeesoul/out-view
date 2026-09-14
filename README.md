@@ -1,399 +1,94 @@
 # outView
 
-<p align="center">
-  <strong>🚀 高性能远程桌面内网穿透解决方案</strong>
-</p>
+outView 为内网 TCP 服务提供公网端口映射，主要用于 Windows 远程桌面（RDP）。桌面显示和远程登录由系统 RDP 完成，outView 负责设备发现、隧道转发、固定端口与连接恢复。
 
-<p align="center">
-  <a href="#功能特性">功能特性</a> •
-  <a href="#快速开始">快速开始</a> •
-  <a href="#配置说明">配置说明</a> •
-  <a href="#编译构建">编译构建</a> •
-  <a href="USER_MANUAL.md">用户手册</a>
-</p>
+当前开发版本：**1.2.1**。许可证：MIT。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
-  <img src="https://img.shields.io/badge/java-8%2B-orange.svg" alt="Java">
-  <img src="https://img.shields.io/badge/go-1.24%2B-00ADD8.svg" alt="Go">
-  <img src="https://img.shields.io/badge/webrtc-pion%20v4-purple.svg" alt="WebRTC">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
-</p>
+## 已实现能力
 
----
+- Java / Netty 双向 TCP 隧道，按连接 ID 区分多个远程连接。
+- 后台为在线或离线设备设置固定外网端口，断线、重连和服务重启保留预留。
+- 修改在线设备端口时同步监听、数据库、会话和设备码查询；端口冲突时保留原映射。
+- Go CLI 和 Windows Fyne GUI，支持配置自建服务器、自动重连和真实心跳 RTT。
+- 读写、注册及心跳应答期限；单连接有界队列；双向关闭通知与资源回收。
+- 后台登录、设备断开、封禁与解封，H2 默认持久化，可配置 MySQL。
 
-## 简介
-
-**outView** 是一款轻量级、高性能的远程桌面内网穿透系统。无需复杂的网络配置，即可让您从外部网络安全地访问内网电脑的远程桌面服务。
-
-### 核心优势
-
-- 🎯 **零配置启动** - 开箱即用，5分钟即可完成部署
-- ⚡ **高性能转发** - 基于 Netty NIO 框架，支持高并发连接
-- 🚀 **WebRTC 传输** - v1.2.0 新增 WebRTC DataChannel，延迟降低 30-50%
-- 🔐 **安全认证** - Token 机制 + 可选 SSL/TLS 加密
-- 🌐 **跨平台支持** - 服务端 Java，客户端 Go，支持 Windows/Linux/macOS
-- 📦 **轻量级** - 服务端 JAR 仅 29MB，客户端 exe 仅 2.4MB
-
----
-
-## v1.2.0 新特性
-
-### 1. 产品化改造 - 零配置体验
-
-outView 1.2.0 完成产品化改造，实现类似 UU远程、向日葵的零配置体验：
-
-- **6位设备码**: 自动生成基于硬件的唯一设备码（100000-999999）
-- **图形化界面**: Fyne GUI，双标签页设计（被控端/控制端）
-- **一键连接**: 输入对方设备码即可连接，自动启动 mstsc
-- **硬编码服务器**: 内置公网服务器地址，用户无需配置
-- **设备码查询**: 新增 Rendezvous 服务器，支持设备码到端口的映射查询
-- **Windows 安装包**: Inno Setup 打包，支持开机自启
-
-### 2. WebRTC 传输优化
-
-- **延迟降低 30-50%**: WebRTC UDP 传输 vs TCP 转发
-- **弱网稳定性提升**: SCTP 可靠传输 + ICE 重连
-- **自动降级**: WebRTC 失败时无缝切换到 TCP
-- **Sidecar 架构**: 独立 Go 进程管理 WebRTC
-- **GUI 配置**: WebRTC 配置选项卡，支持 STUN/TURN 服务器配置
-
-### 3. GUI 增强功能
-
-- **连接状态显示**: 实时显示连接类型（TCP/WebRTC）、延迟、流量
-- **系统托盘**: 最小化到托盘，后台运行
-- **WebRTC 配置**: 图形化配置 STUN/TURN 服务器、传输策略
-
----
-
-## v1.2.0 新特性：WebRTC 传输优化（已废弃，见上方）
-
-outView 1.2.0 引入了 WebRTC DataChannel 传输层，显著提升远程桌面体验：
-
-- **延迟降低 30-50%**: WebRTC UDP 传输 vs TCP 转发
-- **弱网稳定性提升**: SCTP 可靠传输 + ICE 重连
-- **自动降级**: WebRTC 失败时无缝切换到 TCP，保证连接成功率
-- **Sidecar 架构**: 独立 Go 进程管理 WebRTC，不影响 Java 服务稳定性
-
-### 架构
-
-```
-Java 服务器 ←→ IPC (Unix Socket/Named Pipe) ←→ Go WebRTC Sidecar
-                                                        ↕ WebRTC DataChannel
-                                                   Go 客户端 (pion/webrtc v4)
-```
-
-详见 [WebRTC 用户指南](docs/webrtc-user-guide.md) | [故障排查](docs/webrtc-troubleshooting.md)
-
----
-
-## 架构图
-
-```
-┌─────────────────┐                    ┌─────────────────┐                    ┌─────────────────┐
-│    外出电脑      │                    │    公网服务器    │                    │    家庭电脑      │
-│    (电脑 A)      │                    │   outView 服务端 │                    │   outView 客户端 │
-│                 │     RDP 连接        │                 │     隧道转发       │                 │
-│   ┌─────────┐   │ ──────────────────> │   ┌─────────┐   │ <────────────────── │   ┌─────────┐   │
-│   │  mstsc  │   │   :6001 (数据端口)   │   │  Netty  │   │   7000 (控制端口)   │   │  Go客户端│   │
-│   └─────────┘   │                    │   └─────────┘   │                    │   └─────────┘   │
-│                 │                    │                 │                    │        │        │
-│                 │                    │                 │                    │        ▼        │
-│                 │                    │                 │                    │   ┌─────────┐   │
-│                 │                    │                 │                    │   │ RDP:3389│   │
-│                 │                    │                 │                    │   └─────────┘   │
-└─────────────────┘                    └─────────────────┘                    └─────────────────┘
-```
-
----
-
-## 功能特性
-
-| 特性 | 描述 | 状态 |
-|------|------|:----:|
-| **高性能服务端** | Spring Boot 2.7 + Netty 4.1，支持高并发 | ✅ |
-| **跨平台客户端** | Go 1.21+ 编写，支持 Windows/Linux/macOS | ✅ |
-| **动态端口分配** | 自动分配 6000-6500 数据端口 | ✅ |
-| **Token 认证** | 自动生成设备ID和密钥，支持有效期管理 | ✅ |
-| **心跳保活** | 30秒间隔心跳，90秒超时自动断开 | ✅ |
-| **双向数据转发** | 完整支持 RDP 协议，多连接ID管理 | ✅ |
-| **配置文件支持** | 支持 config.txt，简化部署流程 | ✅ |
-| **SSL/TLS 加密** | 支持自签名证书和 CA 证书 | ✅ |
-| **管理后台** | Web UI 管理设备、生成 Token | ✅ |
-
----
+WebRTC 代码保留为实验模块，当前发布主链路仍为 TCP，GUI 新安装默认关闭 WebRTC。Token 签发校验体系及 Go TLS 隧道尚未完成；不要把生成 Token 或存在服务端 TLS 开关理解为完整的隧道身份认证和加密实现。管理后台账号与隧道注册是不同机制。
 
 ## 快速开始
 
-### 环境要求
+需要 **JDK 8、Maven、Go 1.24+**；构建原生 Windows GUI 还需要可用的 MinGW GCC / CGO 环境。
 
-| 组件 | 版本 | 用途 |
-|------|------|------|
-| JDK | 8+ | 运行服务端 |
-| Maven | 3.6+ | 编译服务端（可选） |
-| Go | 1.24+ | 编译客户端（可选） |
+Windows PowerShell：
 
-### 方式一：产品化部署（推荐）
+```powershell
+# 先设置 JAVA_HOME 为本机 JDK 8 目录，Maven 和 Go 放入 PATH。
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1
+```
 
-**1. 安装客户端**
-
-Windows: 运行 `outview-1.2.0-setup.exe`，安装后自动启动
-
-**2. 被控端操作**
-
-- 打开 outView，切换到"被控端（本机）"标签
-- 查看您的 6 位设备码（如 `123 456`）
-- 点击"启动被控服务"
-- 将设备码告诉对方
-
-**3. 控制端操作**
-
-- 打开 outView，切换到"控制端（连接）"标签
-- 输入对方的设备码
-- 点击"连接"，自动打开远程桌面
-
-**4. WebRTC 配置（可选）**
-
-- 切换到"WebRTC 配置"标签
-- 配置 STUN/TURN 服务器
-- 调整传输策略（直连优先/仅中继）
-
-### 方式二：传统部署（需配置服务器）
-
-**1. 部署服务端**
+Linux / macOS：
 
 ```bash
-# 方式一：直接运行 JAR
-java -jar outview-server.jar
-
-# 方式二：从源码编译
-mvn package -DskipTests
-java -jar target/outview-server.jar
+bash scripts/build.sh
+bash scripts/start-server.sh
 ```
 
-**2. 生成 Token**
+默认构建产物位于 `artifacts/outview-1.2.1/`，包含服务端、CLI 与实验 Sidecar。脚本拒绝覆盖已存在的输出目录，重复构建时使用新的 `-OutputDirectory` / `--output`。
 
-访问管理后台 `http://服务器IP:8080`，点击 **"生成新 Token"**
+被控端 CLI 示例：
 
-记录返回的 `deviceId` 和 `token`
-
-**3. 运行客户端**
-
-**命令行方式：**
-```bash
-outview-client.exe -host 服务器IP -port 7000 -device-id 设备ID -token 密钥
+```text
+outview-client-cli-windows-amd64.exe -host YOUR_SERVER -port 7000 -device-id MY_DEVICE -token YOUR_TOKEN -local-port 3389
 ```
 
-**配置文件方式：**
+访问 `http://YOUR_SERVER:8080` 登录后台，进入“固定端口管理”，输入相同设备 ID 和允许范围内的外网端口。远程电脑通过 `mstsc /v:YOUR_SERVER:固定端口` 连接。
 
-创建 `config.txt`（与 exe 同目录）：
-```
-host=your-server.com
-port=7000
-device-id=your-device-id
-token=your-token
-local-port=3389
-```
+默认后台账号来自 `application.yml`；部署时请配置自己的账号。被控电脑需要已有可用的 RDP 服务，端口映射不会替系统开启 RDP。
 
-双击 `outview-client.exe` 即可自动读取配置
+## 端口与数据
 
-**4. 连接远程桌面**
+| 默认端口 | 用途 |
+| --- | --- |
+| 8080 | 管理后台与 HTTP API |
+| 7000 | 客户端注册、心跳、查询和 TCP 隧道 |
+| 6000–6500 | 固定外网端口池，可通过服务端配置调整 |
 
-1. 打开 Windows 远程桌面连接 (`Win + R` → `mstsc`)
-2. 输入 `服务器IP:分配端口`（如 `example.com:6001`）
-3. 输入家庭电脑的 Windows 用户名和密码
+固定映射保存在 H2 `data/outview.mv.db` 中。启动脚本固定工作目录，支持 `OUTVIEW_DATA_DIR` 指定持久数据目录。**升级或更换启动目录时继续使用原数据目录和原设备 ID**，详见用户手册。
 
----
+## 项目骨架
 
-## 快速开始（旧版，已废弃）
-
----
-
-## 端口说明
-
-| 端口 | 用途 | 说明 |
-|------|------|------|
-| **8080** | HTTP API | 管理后台、Token 生成、设备管理 |
-| **7000** | 控制端口 | 客户端注册、心跳保活 |
-| **6000-6500** | 数据端口 | RDP 数据转发，自动分配 |
-
----
-
-## 配置说明
-
-### 服务端配置 (`application.yml`)
-
-```yaml
-outview:
-  control-port: 7000          # 客户端连接端口
-  data-port-start: 6000       # 数据端口范围起始
-  data-port-end: 6500         # 数据端口范围结束
-  heartbeat-timeout: 90       # 心跳超时时间（秒）
-  heartbeat-interval: 30      # 心跳间隔（秒）
-  token-expire-days: 30       # Token 有效期（天）
-  ssl:
-    enabled: false            # 生产环境建议启用
-    use-self-signed: true     # 开发环境可使用自签名证书
+```text
+src/main/java/com/outview/   Java 服务端、协议和生命周期管理
+src/main/resources/static/  后台 HTML 与 assets 下的 CSS/JavaScript
+src/test/                   Java 单元及真实 H2/Netty 集成测试
+client/cmd/                 CLI / GUI 入口
+client/internal/client/     控制连接、转发、信令及配置
+webrtc-sidecar/             实验 WebRTC / IPC 组件
+scripts/                    构建、测试、启动入口
+test/soak/                  真实 JAR + CLI 的回环持续连接验收
+installer/windows/          Windows 安装器
+docs/                       用户、开发、架构和排错文档
+artifacts/、release/         本地构建产物，不提交 Git
 ```
 
-### 客户端参数
+## 文档与验证
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `host` | 服务器地址 | - |
-| `port` | 服务器控制端口 | `7000` |
-| `device-id` | 设备ID（必需） | - |
-| `token` | 认证密钥（必需） | - |
-| `local-port` | 本地服务端口 | `3389` (RDP) |
-| `heartbeat` | 心跳间隔（秒） | `30` |
-| `config` | 指定配置文件路径 | 自动检测 |
+- [用户手册：部署、固定端口、升级](docs/USER_MANUAL.md)
+- [开发与测试](docs/DEVELOPER_GUIDE.md)
+- [实际架构](docs/ARCHITECTURE.md)
+- [长连接与端口排错](docs/TROUBLESHOOTING.md)
+- [本次验证结果及边界](RELEASE_SUMMARY.md)
+- [变更记录](CHANGELOG.md)
 
----
-
-## 编译构建
-
-### 服务端
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1
+```
 
 ```bash
-mvn clean package -DskipTests
+bash scripts/test.sh
 ```
 
-### 客户端
+已有回环验收覆盖 125 秒空闲、四连接共 5 MiB 数据往返、端口冲突、在线改端口、服务重启后的固定端口恢复。它不是公网、真实 RDP 或小时级连接稳定性的保证。持续运行更久可使用 `test/soak/tunnel_soak.py`。
 
-```bash
-cd client
-
-# 安装依赖
-go mod tidy
-
-# 编译 CLI 版本（推荐，无需 CGO）
-set CGO_ENABLED=0
-go build -ldflags "-s -w" -o outview-client.exe ./cmd/outview-client
-
-# 编译 GUI 版本（需要 CGO 和 C 编译器）
-build-gui.bat
-```
-
----
-
-## 自定义协议
-
-outView 使用自定义二进制协议进行通信，消息头固定 12 字节：
-
-| 字段 | 长度 | 说明 |
-|------|------|------|
-| Magic | 4B | `0x4F565753` ("OVWS") |
-| Version | 1B | 协议版本 (1) |
-| Type | 1B | 消息类型 |
-| Length | 4B | 消息体长度 |
-| Reserved | 2B | 保留字段 |
-
-**消息类型：**
-
-| 值 | 类型 | 说明 |
-|:--:|------|------|
-| 1 | REGISTER | 注册请求 |
-| 2 | HEARTBEAT | 心跳请求 |
-| 3 | DATA | 数据转发 |
-| 4 | ERROR | 错误消息 |
-| 5 | REGISTER_ACK | 注册响应 |
-| 6 | HEARTBEAT_ACK | 心跳响应 |
-
----
-
-## 常见问题
-
-<details>
-<summary><b>客户端连接失败？</b></summary>
-
-- 检查服务器是否正常运行
-- 检查防火墙是否开放 7000 端口
-- 确认 deviceId 和 token 是否正确
-- 检查网络连通性：`telnet 服务器IP 7000`
-</details>
-
-<details>
-<summary><b>远程桌面连接不上？</b></summary>
-
-- 确认客户端显示"注册成功"和分配的端口
-- 使用正确的数据端口（如 6001），不是控制端口 7000
-- 检查防火墙是否开放 6000-6500 端口
-- 确认家庭电脑开启了远程桌面功能
-</details>
-
-<details>
-<summary><b>连接后黑屏或断开？</b></summary>
-
-- 确认家庭电脑的 RDP 服务正常运行（端口 3389）
-- 确认家庭电脑防火墙允许 3389 入站连接
-- 检查网络稳定性
-</details>
-
-<details>
-<summary><b>如何管理多台电脑？</b></summary>
-
-- 每台电脑使用不同的 deviceId
-- 每台电脑会自动分配不同的数据端口
-- 通过不同端口区分连接哪台电脑
-</details>
-
----
-
-## 项目结构
-
-```
-out-view/
-├── src/main/java/com/outview/       # 服务端源码
-│   ├── config/                      # 配置类
-│   ├── controller/                  # REST API
-│   ├── netty/                       # Netty 核心
-│   │   ├── handler/                 # 消息处理器
-│   │   └── ssl/                     # SSL 支持
-│   ├── protocol/                    # 协议实现
-│   └── service/                     # 业务服务
-├── client/                          # Go 客户端源码
-│   ├── cmd/outview-client/          # CLI 入口
-│   ├── cmd/outview-gui/             # GUI 入口
-│   └── internal/                    # 内部模块
-│       ├── protocol/                # 协议实现
-│       └── client/                  # 客户端核心
-├── pom.xml                          # Maven 配置
-└── README.md                        # 本文件
-```
-
----
-
-## 技术栈
-
-**服务端：**
-- Spring Boot 2.7.18
-- Netty 4.1.100
-- Fastjson
-
-**客户端：**
-- Go 1.21+
-- Fyne (GUI，可选)
-
----
-
-## 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
-
----
-
-## License
-
-本项目基于 [MIT License](LICENSE) 开源。
-
----
-
-<p align="center">
-  Made with ❤️ by <a href="https://github.com/jeesoul">jeesoul</a>
-</p>
+欢迎提交带复现步骤、版本、配置和已脱敏日志的 Issue 或 Pull Request。

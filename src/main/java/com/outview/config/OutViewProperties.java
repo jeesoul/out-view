@@ -12,6 +12,9 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "outview")
 public class OutViewProperties {
 
+    /** 监听地址；本地集成测试使用 127.0.0.1，生产默认监听全部网卡。 */
+    private String bindAddress = "0.0.0.0";
+
     /**
      * 控制端口 (客户端注册/心跳)
      */

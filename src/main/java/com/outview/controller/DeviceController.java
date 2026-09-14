@@ -4,7 +4,7 @@ import com.outview.entity.BannedDevice;
 import com.outview.entity.ClientSession;
 import com.outview.entity.PortMapping;
 import com.outview.service.BanService;
-import com.outview.service.DataPortService;
+import com.outview.service.DeviceLifecycleService;
 import com.outview.service.PortMappingService;
 import com.outview.service.SessionStore;
 import org.springframework.security.core.Authentication;
@@ -19,16 +19,16 @@ public class DeviceController {
 
     private final SessionStore sessionStore;
     private final PortMappingService portMappingService;
-    private final DataPortService dataPortService;
+    private final DeviceLifecycleService lifecycle;
     private final BanService banService;
 
     public DeviceController(SessionStore sessionStore,
                             PortMappingService portMappingService,
-                            DataPortService dataPortService,
+                            DeviceLifecycleService lifecycle,
                             BanService banService) {
         this.sessionStore = sessionStore;
         this.portMappingService = portMappingService;
-        this.dataPortService = dataPortService;
+        this.lifecycle = lifecycle;
         this.banService = banService;
     }
 
@@ -71,7 +71,7 @@ public class DeviceController {
     /** 普通断开：踢下线，允许重连 */
     @DeleteMapping("/{deviceId}")
     public Map<String, Object> disconnectDevice(@PathVariable String deviceId) {
-        forceDisconnect(deviceId);
+        lifecycle.disconnect(deviceId);
         return Collections.singletonMap("success", true);
     }
 
@@ -82,11 +82,8 @@ public class DeviceController {
         String reason = body != null ? body.getOrDefault("reason", "管理员封禁") : "管理员封禁";
         String operator = currentUser();
 
-        // 先踢下线
-        forceDisconnect(deviceId);
-
-        // 加入封禁名单
-        banService.ban(deviceId, operator, reason);
+        // 封禁持久化和断开使用同一设备锁，防止自动重连穿过两步之间的窗口。
+        lifecycle.ban(deviceId, operator, reason);
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -99,7 +96,7 @@ public class DeviceController {
     /** 解封：从黑名单移除，允许重新连接 */
     @DeleteMapping("/{deviceId}/ban")
     public Map<String, Object> unbanDevice(@PathVariable String deviceId) {
-        banService.unban(deviceId);
+        lifecycle.unban(deviceId);
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("deviceId", deviceId);
@@ -136,16 +133,13 @@ public class DeviceController {
             return err;
         }
         try {
-            int oldPort = portMappingService.updateExternalPort(deviceId, newPort);
+            int oldPort = lifecycle.updatePort(deviceId, newPort);
             if (oldPort < 0) {
                 Map<String, Object> err = new HashMap<>();
                 err.put("success", false);
                 err.put("error", "Device not found or not connected");
                 return err;
             }
-            // Restart the data port listener on the new port
-            dataPortService.stopDataPort(oldPort);
-            dataPortService.startDataPort(newPort, deviceId);
 
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
@@ -153,7 +147,7 @@ public class DeviceController {
             result.put("oldPort", oldPort);
             result.put("newPort", newPort);
             return result;
-        } catch (IllegalArgumentException e) {
+        } catch (RuntimeException e) {
             Map<String, Object> err = new HashMap<>();
             err.put("success", false);
             err.put("error", e.getMessage());
@@ -184,6 +178,10 @@ public class DeviceController {
         Map<String, Object> result = new HashMap<>();
         result.put("total", mappings.size());
         result.put("mappings", mappings);
+        Map<String, Integer> range = new HashMap<>();
+        range.put("start", portMappingService.getPortStart());
+        range.put("end", portMappingService.getPortEnd());
+        result.put("portRange", range);
         return result;
     }
 
@@ -206,7 +204,7 @@ public class DeviceController {
             targetPort = 3389; // 默认 RDP
         }
 
-        String failReason = portMappingService.setFixedPort(deviceId.trim(), externalPort, targetPort);
+        String failReason = lifecycle.preset(deviceId.trim(), externalPort, targetPort);
         if (failReason != null) {
             result.put("success", false);
             result.put("error", failReason);
@@ -222,32 +220,12 @@ public class DeviceController {
     /** 删除固定端口映射（释放端口；若设备在线则一并断开） */
     @DeleteMapping("/mappings/{deviceId}")
     public Map<String, Object> deleteMapping(@PathVariable String deviceId) {
-        ClientSession session = sessionStore.getSession(deviceId);
-        if (session != null) {
-            if (session.getChannel() != null && session.getChannel().isActive()) {
-                session.getChannel().close();
-            }
-            dataPortService.stopDataPort(session.getExternalPort());
-            sessionStore.removeSession(deviceId);
-        }
-        portMappingService.releasePort(deviceId);
+        lifecycle.deleteMapping(deviceId);
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("deviceId", deviceId);
         return result;
-    }
-
-    private void forceDisconnect(String deviceId) {
-        ClientSession session = sessionStore.getSession(deviceId);
-        if (session != null) {
-            if (session.getChannel() != null && session.getChannel().isActive()) {
-                session.getChannel().close();
-            }
-            dataPortService.stopDataPort(session.getExternalPort());
-            portMappingService.markOffline(deviceId);
-            sessionStore.removeSession(deviceId);
-        }
     }
 
     private String currentUser() {

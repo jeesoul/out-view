@@ -4,12 +4,11 @@ server:
 spring:
   application:
     name: outview-server
-  main:
-    allow-circular-references: true
 
   # 数据库配置 - 默认使用 H2 嵌入式数据库（零配置，数据持久化到文件）
   datasource:
-    url: jdbc:h2:file:./data/outview;AUTO_SERVER=TRUE
+    # 固定目录可通过 OUTVIEW_DATA_DIR 指定；WRITE_DELAY=0 表示提交同步写盘，避免默认延迟窗口丢失预留。
+    url: jdbc:h2:file:${OUTVIEW_DATA_DIR:./data}/outview;AUTO_SERVER=TRUE;WRITE_DELAY=0
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -47,6 +46,8 @@ outview-admin:
 
 # outView 配置
 outview:
+  # 本地测试可设为 127.0.0.1；生产默认监听全部网卡。
+  bind-address: 0.0.0.0
   # Netty 控制端口 (客户端注册/心跳)
   control-port: 7000
   # 数据端口范围 (RDP 转发)
@@ -70,7 +71,7 @@ outview:
 logging:
   level:
     root: INFO
-    com.outview: DEBUG
+    com.outview: INFO
     io.netty: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

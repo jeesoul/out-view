@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version   = "1.2.0"
+	Version   = "1.2.1"
 	BuildDate = "unknown"
 )
 
@@ -140,10 +140,6 @@ func main() {
 
 	c.OnError = func(err error) {
 		fmt.Printf("[Error] %v\n", err)
-	}
-
-	c.OnDataReceived = func(data []byte) {
-		fmt.Printf("[Data] Received %d bytes from tunnel\n", len(data))
 	}
 
 	// Handle graceful shutdown

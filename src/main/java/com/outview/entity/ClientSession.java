@@ -40,12 +40,12 @@ public class ClientSession {
     /**
      * 分配的对外端口
      */
-    private int externalPort;
+    private volatile int externalPort;
 
     /**
      * 上次心跳时间
      */
-    private LocalDateTime lastHeartbeat;
+    private volatile LocalDateTime lastHeartbeat;
 
     /**
      * 创建时间
@@ -55,7 +55,7 @@ public class ClientSession {
     /**
      * 会话状态
      */
-    private SessionStatus status;
+    private volatile SessionStatus status;
 
     /**
      * 会话状态枚举

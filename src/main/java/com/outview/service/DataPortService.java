@@ -1,6 +1,7 @@
 package com.outview.service;
 
 import com.outview.netty.DataChannelInitializer;
+import com.outview.config.OutViewProperties;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -25,8 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DataPortService {
 
     private final DataChannelInitializer dataChannelInitializer;
-    private final SessionStore sessionStore;
-    private final PortMappingService portMappingService;
+    private final OutViewProperties properties;
 
     /**
      * 独立的 boss group（每个数据端口只需 1 个 acceptor 线程）
@@ -37,26 +37,24 @@ public class DataPortService {
 
     /** 端口 -> 服务端 Channel */
     private final Map<Integer, Channel> dataPortChannels = new ConcurrentHashMap<>();
+    private final Map<Integer, String> portOwners = new ConcurrentHashMap<>();
 
     /** 端口 -> (外部Channel -> 客户端Channel) */
     private final Map<Integer, Map<Channel, Channel>> portConnectionMap = new ConcurrentHashMap<>();
 
     public DataPortService(DataChannelInitializer dataChannelInitializer,
-                          SessionStore sessionStore,
-                          PortMappingService portMappingService,
+                          OutViewProperties properties,
                           EventLoopGroup sharedWorkerGroup) {
         this.dataChannelInitializer = dataChannelInitializer;
-        this.sessionStore = sessionStore;
-        this.portMappingService = portMappingService;
+        this.properties = properties;
         this.dataBossGroup = new NioEventLoopGroup(1);
         this.sharedWorkerGroup = sharedWorkerGroup;
         log.info("DataPortService initialized, sharing workerGroup with NettyServer");
     }
 
-    public boolean startDataPort(int port, String deviceId) {
-        if (dataPortChannels.containsKey(port)) {
-            log.info("Data port already started: port={}", port);
-            return true;
+    public synchronized boolean startDataPort(int port, String deviceId) {
+        if (isPortActive(port)) {
+            return deviceId.equals(portOwners.get(port));
         }
 
         try {
@@ -68,38 +66,55 @@ public class DataPortService {
                     .childOption(ChannelOption.TCP_NODELAY, true)
                     .childHandler(dataChannelInitializer);
 
-            ChannelFuture future = bootstrap.bind(new InetSocketAddress(port)).sync();
+            ChannelFuture future = bootstrap.bind(new InetSocketAddress(properties.getBindAddress(), port)).sync();
             dataPortChannels.put(port, future.channel());
+            portOwners.put(port, deviceId);
             portConnectionMap.put(port, new ConcurrentHashMap<>());
 
             log.info("Data port started: port={}, deviceId={}", port, deviceId);
             return true;
 
         } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             log.error("Failed to start data port: port={}, deviceId={}", port, deviceId, e);
             return false;
         }
     }
 
-    public void stopDataPort(int port) {
+    public synchronized void stopDataPort(int port) {
         Channel serverChannel = dataPortChannels.remove(port);
         if (serverChannel != null) {
-            serverChannel.close();
+            // 等待 acceptor 确认关闭，保证随后同端口重连不会撞到尚未释放的监听。
+            serverChannel.close().syncUninterruptibly();
             log.info("Data port stopped: port={}", port);
         }
 
-        Map<Channel, Channel> connections = portConnectionMap.remove(port);
+        closeConnections(port);
+        portConnectionMap.remove(port);
+        portOwners.remove(port);
+    }
+
+    public synchronized void stopDataPort(int port, String deviceId) {
+        if (deviceId.equals(portOwners.get(port))) stopDataPort(port);
+    }
+
+    public synchronized void closeConnections(int port) {
+        Map<Channel, Channel> connections = portConnectionMap.get(port);
         if (connections != null) {
             connections.keySet().forEach(ch -> {
                 if (ch.isActive()) ch.close();
             });
+            connections.clear();
         }
     }
 
-    public void registerConnection(int port, Channel externalChannel, Channel clientChannel) {
+    public synchronized void registerConnection(int port, Channel externalChannel, Channel clientChannel) {
         Map<Channel, Channel> connections = portConnectionMap.get(port);
-        if (connections != null) {
+        // 旧 acceptor 已经接收但尚未初始化的连接，不得进入新一代监听。
+        if (connections != null && externalChannel.parent() == dataPortChannels.get(port) && isPortActive(port)) {
             connections.put(externalChannel, clientChannel);
+        } else {
+            externalChannel.close();
         }
     }
 
@@ -125,18 +140,9 @@ public class DataPortService {
     }
 
     @PreDestroy
-    public void shutdown() {
+    public synchronized void shutdown() {
         log.info("Shutting down data ports...");
-        dataPortChannels.forEach((port, ch) -> {
-            try {
-                ch.close();
-                log.info("Data port closed: port={}", port);
-            } catch (Exception e) {
-                log.error("Error closing data port: port={}", port, e);
-            }
-        });
-        dataPortChannels.clear();
-        portConnectionMap.clear();
+        for (Integer port : new java.util.ArrayList<>(dataPortChannels.keySet())) stopDataPort(port);
 
         // 只关闭自己创建的 boss group；sharedWorkerGroup 由 NettyServer 管理
         if (dataBossGroup != null) {
