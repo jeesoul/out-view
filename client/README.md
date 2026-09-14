@@ -2,6 +2,16 @@
 
 CLI 入口为 `cmd/outview-client`，Windows GUI 为 `cmd/outview-gui`，两者共用 `internal/client`。
 
+## 平台支持
+
+| 平台 | CLI | GUI |
+| --- | --- | --- |
+| Windows x64 | 支持 | 支持 |
+| Linux x64 / ARM64 | 支持 | 暂无 |
+| macOS Intel / Apple Silicon | 支持 | 暂无 |
+
+Linux 和 macOS CLI 无需 CGO。仓库根目录的 `scripts/build.ps1 -Release` / `scripts/build.sh --release` 会生成上述五种 CLI；普通构建只生成当前主机平台，不能把普通构建目录当成完整发布包。
+
 ```bash
 go build -o outview-client-cli ./cmd/outview-client
 go test -count=1 -timeout=120s -tags=ci ./...
